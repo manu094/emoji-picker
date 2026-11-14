@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Emoji Picker</title>
+<script>
+// Themes are applied before first paint so the window never flashes the wrong colours.
+const THEMES = {
+  mocha:   { bg:'#1e1e2e', surf:'#2a2b3d', text:'#cdd6f4', muted:'#9399b2', acc:'#89b4fa', light:false },
+  latte:   { bg:'#eff1f5', surf:'#e2e5ec', text:'#4c4f69', muted:'#6c6f85', acc:'#1e66f5', light:true  },
+  gruvbox: { bg:'#282828', surf:'#36312f', text:'#ebdbb2', muted:'#a89984', acc:'#83a598', light:false },
+  nord:    { bg:'#2e3440', surf:'#3b4252', text:'#eceff4', muted:'#9aa5bd', acc:'#88c0d0', light:false },
+  dracula: { bg:'#282a36', surf:'#343746', text:'#f8f8f2', muted:'#9ba3c9', acc:'#bd93f9', light:false },
+};
+let currentTheme = 'mocha';
+function applyTheme(name) {
+  const t = THEMES[name];
+  if (!t) return false;
+  const s = document.documentElement.style;
+  for (const k of ['bg', 'surf', 'text', 'muted', 'acc']) s.setProperty('--' + k, t[k]);
+  s.colorScheme = t.light ? 'light' : 'dark';
+  currentTheme = name;
+  return true;
+}
+try { applyTheme(localStorage.getItem('ep_theme')) || applyTheme('mocha'); } catch (e) { applyTheme('mocha'); }
+</script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
+:root {
+  --esz: 24px;
+  --cols: 10;
+  --bord:  color-mix(in srgb, var(--text) 11%, transparent);
+  --hover: color-mix(in srgb, var(--text) 7%, transparent);
+  --sel:   color-mix(in srgb, var(--acc) 22%, transparent);
+  --ring:  color-mix(in srgb, var(--acc) 75%, transparent);
+  --font:  Inter, 'Noto Sans', system-ui, sans-serif;
+  --emoji: 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+}
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body {
+  font: 13px/1.3 var(--font);
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+  cursor: default;
+  transition: opacity .12s;
+}
+body.sent { opacity: .35; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+/* ── Search bar ──────────────────────────────────────── */
+#bar { display: flex; gap: 6px; padding: 10px 10px 6px; flex-shrink: 0; }
+#search {
+  flex: 1; min-width: 0; height: 36px;
+  display: flex; align-items: center; gap: 6px; padding: 0 10px;
+  background: var(--surf); border: 1px solid var(--bord); border-radius: 10px;
+  cursor: text;
+}
+#search:focus-within { border-color: var(--ring); box-shadow: 0 0 0 3px var(--sel); }
+#search svg { flex-shrink: 0; color: var(--muted); }
+#q {
+  flex: 1; min-width: 60px; height: 100%;
+  background: none; border: none; outline: none;
+  color: var(--text); font: 14px var(--font);
+}
+#q::placeholder { color: var(--muted); }
+#q::selection { background: var(--sel); }
+#tray {
+  display: flex; justify-content: flex-end; flex-shrink: 1; min-width: 0; max-width: 60%;
+  overflow: hidden; border-radius: 7px; background: var(--sel);
+}
+#tray:empty { display: none; }
+.chip {
+  flex-shrink: 0; font: 17px/1 var(--emoji); padding: 4px 2px; border-radius: 5px;
+}
+.chip:first-child { padding-left: 5px; }
+.chip:last-child  { padding-right: 5px; }
+.chip:hover { background: var(--hover); }
+.icon-btn {
+  width: 36px; height: 36px; flex-shrink: 0; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font: 18px/1 var(--emoji);
+}
+.icon-btn:hover { background: var(--hover); color: var(--text); }
+
+/* ── Category tabs ───────────────────────────────────── */
+#cats { display: flex; padding: 0 8px 6px; flex-shrink: 0; border-bottom: 1px solid var(--bord); }
+.cat {
+  flex: 1; height: 30px; border-radius: 8px;
+  font: 16px/1 var(--emoji);
+  filter: grayscale(1); opacity: .5;
+}
+.cat:hover  { background: var(--hover); opacity: .85; }
+.cat.active { background: var(--sel); filter: none; opacity: 1; }
+
+/* ── Emoji list ──────────────────────────────────────── */
+#scroll {
+  flex: 1; min-height: 0; position: relative;
+  overflow-y: auto; scrollbar-gutter: stable;
+  scrollbar-width: thin; scrollbar-color: var(--bord) transparent;
+  padding: 0 2px 8px 8px;
+}
+section h2 {
+  position: sticky; top: 0; z-index: 1;
+  font-size: 11.5px; font-weight: 600; color: var(--muted);
+  padding: 9px 4px 5px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(8px);
+}
+.grid { display: grid; grid-template-columns: repeat(var(--cols), 1fr); gap: 2px; }
+.e {
+  aspect-ratio: 1; min-width: 0; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  font: var(--esz)/1 var(--emoji);
+  border-radius: 8px;
+  scroll-margin: 34px 0 6px;
+}
+.e.sel { background: var(--sel); box-shadow: inset 0 0 0 1.5px var(--ring); }
+.e:active { transform: scale(.92); }
+.empty { text-align: center; color: var(--muted); padding: 56px 20px; }
+.empty b { display: block; font: 34px/1 var(--emoji); margin-bottom: 10px; }
+
+/* ── Footer ──────────────────────────────────────────── */
+#foot {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  height: 40px; padding: 0 12px; border-top: 1px solid var(--bord);
+}
+#pv-em { font: 22px/1 var(--emoji); flex-shrink: 0; }
+#pv-nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#hints { display: flex; gap: 10px; flex-shrink: 0; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+kbd {
+  display: inline-block; font: 600 10.5px/1 var(--font); color: var(--text);
+  padding: 3px 5px; margin-right: 2px; border-radius: 5px;
+  background: var(--hover); border: 1px solid var(--bord);
+}
+
+/* ── Settings ────────────────────────────────────────── */
+dialog {
+  margin: auto; width: calc(100% - 24px); max-width: 460px; max-height: calc(100% - 24px);
+  padding: 16px; overflow-y: auto;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--bord); border-radius: 14px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / .45);
+  scrollbar-width: thin; scrollbar-color: var(--bord) transparent;
+}
+dialog::backdrop { background: rgb(0 0 0 / .45); }
+dialog header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+dialog h1 { font-size: 15px; font-weight: 600; }
+dialog h3 { font-size: 11.5px; font-weight: 600; color: var(--muted); margin: 14px 0 6px; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; border: none; }
+.seg label { position: relative; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg span {
+  display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px;
+  border: 1px solid var(--bord); border-radius: 8px; cursor: pointer;
+}
+.seg span:hover { background: var(--hover); }
+.seg input:checked + span { background: var(--sel); border-color: var(--ring); }
+.seg input:focus-visible + span { outline: 2px solid var(--acc); outline-offset: 1px; }
+.seg i { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--bord); }
+#tones span { font: 18px/1 var(--emoji); padding: 0 8px; }
+.row { display: flex; align-items: center; gap: 10px; }
+.row input[type=range] { flex: 1; accent-color: var(--acc); }
+.row output { width: 4ch; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.btn {
+  height: 30px; padding: 0 12px; border: 1px solid var(--bord); border-radius: 8px;
+}
+.btn:hover { background: var(--hover); }
+.btn:focus-visible, .icon-btn:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 7px 12px; align-items: baseline; }
+.keys dt { white-space: nowrap; }
+.keys dd { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header id="bar">
+  <label id="search">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="m10.6 10.6 3.4 3.4"/></svg>
+    <span id="tray"></span>
+    <input id="q" type="text" placeholder="Search emoji" autocomplete="off" spellcheck="false">
+  </label>
+  <button id="tone-btn" class="icon-btn" tabindex="-1" title="Skin tone  (Ctrl+S)"></button>
+  <button id="set-btn" class="icon-btn" tabindex="-1" title="Settings and shortcuts  (Ctrl+,)">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4.5h5.5M11.5 4.5H14M2 11.5h2.5M8.5 11.5H14"/><circle cx="9.5" cy="4.5" r="2"/><circle cx="6.5" cy="11.5" r="2"/></svg>
+  </button>
+</header>
+
+<nav id="cats"></nav>
+
+<main id="scroll">
+  <div id="list">
+    <div id="browse"></div>
+    <div id="results" hidden></div>
+  </div>
+</main>
+
+<footer id="foot">
+  <span id="pv-em"></span>
+  <span id="pv-nm"></span>
+  <span id="hints"></span>
+</footer>
+
+<dialog id="panel">
+  <header>
+    <h1>Settings</h1>
+    <button class="btn" id="panel-x"><kbd>Esc</kbd> Close</button>
+  </header>
+
+  <h3>Theme</h3>
+  <fieldset class="seg" id="themes"></fieldset>
+
+  <h3>Skin tone</h3>
+  <fieldset class="seg" id="tones"></fieldset>
+
+  <h3>Emoji size</h3>
+  <div class="row">
+    <input type="range" id="size" min="18" max="40" step="1" aria-label="Emoji size">
+    <output id="size-out"></output>
+  </div>
+
+  <h3>Frequently used</h3>
+  <button class="btn" id="clear-hist">Clear history</button>
+
+  <h3>Keyboard</h3>
+  <dl class="keys">
+    <dt><kbd>type</kbd></dt><dd>Search — just start typing</dd>
+    <dt><kbd>←</kbd><kbd>↓</kbd><kbd>↑</kbd><kbd>→</kbd></dt><dd>Move · also <kbd>Shift</kbd> + <kbd>H</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd></dd>
+    <dt><kbd>↵</kbd></dt><dd>Paste and close</dd>
+    <dt><kbd>Tab</kbd></dt><dd>Add to the tray and keep picking · also <kbd>Shift</kbd> + <kbd>↵</kbd></dd>
+    <dt><kbd>⌫</kbd></dt><dd>Remove the last tray emoji (when the search is empty) · also <kbd>Shift</kbd> + <kbd>Tab</kbd> · <kbd>Ctrl</kbd> + <kbd>⌫</kbd> empties the tray</dd>
+    <dt><kbd>Ctrl</kbd> + <kbd>Tab</kbd></dt><dd>Next category · <kbd>Shift</kbd> for previous</dd>
+    <dt><kbd>PgUp</kbd><kbd>PgDn</kbd></dt><dd>Move a page</dd>
+    <dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Cycle skin tone</dd>
+    <dt><kbd>Ctrl</kbd> + <kbd>,</kbd></dt><dd>This panel · also <kbd>F1</kbd></dd>
+    <dt><kbd>Esc</kbd></dt><dd>Clear the search, then close without pasting</dd>
+    <dt>Click</dt><dd>Paste and close · <kbd>Shift</kbd> + click or right-click adds to the tray</dd>
+  </dl>
+</dialog>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  EMOJI DATA
+// ════════════════════════════════════════════════════════
+const DATA = {
+  Smileys:[["😀","grinning face"],["😃","grinning face with big eyes"],["😄","grinning face with smiling eyes"],["😁","beaming face with smiling eyes"],["😆","grinning squinting face"],["😅","grinning face with sweat"],["🤣","rolling on the floor laughing"],["😂","face with tears of joy"],["🙂","slightly smiling face"],["🙃","upside-down face"],["🫠","melting face"],["😉","winking face"],["😊","smiling face with smiling eyes"],["😇","smiling face with halo"],["🥰","smiling face with hearts"],["😍","smiling face with heart-eyes"],["🤩","star-struck"],["😘","face blowing a kiss"],["😗","kissing face"],["☺️","smiling face"],["😚","kissing face with closed eyes"],["😙","kissing face with smiling eyes"],["🥲","smiling face with tear"],["😋","face savoring food"],["😛","face with tongue"],["😜","winking face with tongue"],["🤪","zany face"],["😝","squinting face with tongue"],["🤑","money-mouth face"],["🤗","smiling face with open hands"],["🤭","face with hand over mouth"],["🫢","face with open eyes and hand over mouth"],["🫣","face with peeking eye"],["🤫","shushing face"],["🤔","thinking face"],["🫡","saluting face"],["🤐","zipper-mouth face"],["🤨","face with raised eyebrow"],["😐","neutral face"],["😑","expressionless face"],["😶","face without mouth"],["🫥","dotted line face"],["😶‍🌫️","face in clouds"],["😏","smirking face"],["😒","unamused face"],["🙄","face with rolling eyes"],["😬","grimacing face"],["😮‍💨","face exhaling"],["🤥","lying face"],["🫨","shaking face"],["🙂‍↔️","head shaking horizontally"],["🙂‍↕️","head shaking vertically"],["😌","relieved face"],["😔","pensive face"],["😪","sleepy face"],["🤤","drooling face"],["😴","sleeping face"],["😷","face with medical mask"],["🤒","face with thermometer"],["🤕","face with head-bandage"],["🤢","nauseated face"],["🤮","face vomiting"],["🤧","sneezing face"],["🥵","hot face"],["🥶","cold face"],["🥴","woozy face"],["😵","face with crossed-out eyes"],["😵‍💫","face with spiral eyes"],["🤯","exploding head"],["🤠","cowboy hat face"],["🥳","partying face"],["🥸","disguised face"],["😎","smiling face with sunglasses"],["🤓","nerd face"],["🧐","face with monocle"],["😕","confused face"],["🫤","face with diagonal mouth"],["😟","worried face"],["🙁","slightly frowning face"],["☹️","frowning face"],["😮","face with open mouth"],["😯","hushed face"],["😲","astonished face"],["😳","flushed face"],["🥺","pleading face"],["🥹","face holding back tears"],["😦","frowning face with open mouth"],["😧","anguished face"],["😨","fearful face"],["😰","anxious face with sweat"],["😥","sad but relieved face"],["😢","crying face"],["😭","loudly crying face"],["😱","face screaming in fear"],["😖","confounded face"],["😣","persevering face"],["😞","disappointed face"],["😓","downcast face with sweat"],["😩","weary face"],["😫","tired face"],["🥱","yawning face"],["😤","face with steam from nose"],["😡","enraged face"],["😠","angry face"],["🤬","face with symbols on mouth"],["😈","smiling face with horns"],["👿","angry face with horns"],["💀","skull"],["☠️","skull and crossbones"],["💩","pile of poo"],["🤡","clown face"],["👹","ogre"],["👺","goblin"],["👻","ghost"],["👽","alien"],["👾","alien monster"],["🤖","robot"],["😺","grinning cat"],["😸","grinning cat with smiling eyes"],["😹","cat with tears of joy"],["😻","smiling cat with heart-eyes"],["😼","cat with wry smile"],["😽","kissing cat"],["🙀","weary cat"],["😿","crying cat"],["😾","pouting cat"],["🙈","see-no-evil monkey"],["🙉","hear-no-evil monkey"],["🙊","speak-no-evil monkey"],["💌","love letter"],["💘","heart with arrow"],["💝","heart with ribbon"],["💖","sparkling heart"],["💗","growing heart"],["💓","beating heart"],["💞","revolving hearts"],["💕","two hearts"],["💟","heart decoration"],["❣️","heart exclamation"],["💔","broken heart"],["❤️‍🔥","heart on fire"],["❤️‍🩹","mending heart"],["❤️","red heart"],["🩷","pink heart"],["🧡","orange heart"],["💛","yellow heart"],["💚","green heart"],["💙","blue heart"],["🩵","light blue heart"],["💜","purple heart"],["🤎","brown heart"],["🖤","black heart"],["🩶","grey heart"],["🤍","white heart"],["💋","kiss mark"],["💯","hundred points"],["💢","anger symbol"],["💥","collision"],["💫","dizzy"],["💦","sweat droplets"],["💨","dashing away"],["🕳️","hole"],["💬","speech balloon"],["👁️‍🗨️","eye in speech bubble"],["🗨️","left speech bubble"],["🗯️","right anger bubble"],["💭","thought balloon"],["💤","zzz"]],
+  Hands:[["👋","waving hand"],["🤚","raised back of hand"],["🖐️","hand with fingers splayed"],["✋","raised hand"],["🖖","vulcan salute"],["🫱","rightwards hand"],["🫲","leftwards hand"],["🫳","palm down hand"],["🫴","palm up hand"],["🫷","leftwards pushing hand"],["🫸","rightwards pushing hand"],["👌","ok hand"],["🤌","pinched fingers"],["🤏","pinching hand"],["✌️","victory hand"],["🤞","crossed fingers"],["🫰","hand with index finger and thumb crossed"],["🤟","love-you gesture"],["🤘","sign of the horns"],["🤙","call me hand"],["👈","backhand index pointing left"],["👉","backhand index pointing right"],["👆","backhand index pointing up"],["🖕","middle finger"],["👇","backhand index pointing down"],["☝️","index pointing up"],["🫵","index pointing at the viewer"],["👍","thumbs up"],["👎","thumbs down"],["✊","raised fist"],["👊","oncoming fist"],["🤛","left-facing fist"],["🤜","right-facing fist"],["👏","clapping hands"],["🙌","raising hands"],["🫶","heart hands"],["👐","open hands"],["🤲","palms up together"],["🤝","handshake"],["🙏","folded hands"],["✍️","writing hand"],["💅","nail polish"],["🤳","selfie"],["💪","flexed biceps"],["🦾","mechanical arm"],["🦿","mechanical leg"],["🦵","leg"],["🦶","foot"],["👂","ear"],["🦻","ear with hearing aid"],["👃","nose"],["🧠","brain"],["🫀","anatomical heart"],["🫁","lungs"],["🦷","tooth"],["🦴","bone"],["👀","eyes"],["👁️","eye"],["👅","tongue"],["👄","mouth"],["🫦","biting lip"]],
+  People:[["👶","baby"],["🧒","child"],["👦","boy"],["👧","girl"],["🧑","person"],["👱","person: blond hair"],["👨","man"],["🧔","person: beard"],["🧔‍♂️","man: beard"],["🧔‍♀️","woman: beard"],["👩","woman"],["👱‍♀️","woman: blond hair"],["👱‍♂️","man: blond hair"],["🧓","older person"],["👴","old man"],["👵","old woman"],["🙍","person frowning"],["🙍‍♂️","man frowning"],["🙍‍♀️","woman frowning"],["🙎","person pouting"],["🙎‍♂️","man pouting"],["🙎‍♀️","woman pouting"],["🙅","person gesturing no"],["🙅‍♂️","man gesturing no"],["🙅‍♀️","woman gesturing no"],["🙆","person gesturing ok"],["🙆‍♂️","man gesturing ok"],["🙆‍♀️","woman gesturing ok"],["💁","person tipping hand"],["💁‍♂️","man tipping hand"],["💁‍♀️","woman tipping hand"],["🙋","person raising hand"],["🙋‍♂️","man raising hand"],["🙋‍♀️","woman raising hand"],["🧏","deaf person"],["🧏‍♂️","deaf man"],["🧏‍♀️","deaf woman"],["🙇","person bowing"],["🙇‍♂️","man bowing"],["🙇‍♀️","woman bowing"],["🤦","person facepalming"],["🤦‍♂️","man facepalming"],["🤦‍♀️","woman facepalming"],["🤷","person shrugging"],["🤷‍♂️","man shrugging"],["🤷‍♀️","woman shrugging"],["🧑‍⚕️","health worker"],["👨‍⚕️","man health worker"],["👩‍⚕️","woman health worker"],["🧑‍🎓","student"],["👨‍🎓","man student"],["👩‍🎓","woman student"],["🧑‍🏫","teacher"],["👨‍🏫","man teacher"],["👩‍🏫","woman teacher"],["🧑‍⚖️","judge"],["👨‍⚖️","man judge"],["👩‍⚖️","woman judge"],["🧑‍🌾","farmer"],["👨‍🌾","man farmer"],["👩‍🌾","woman farmer"],["🧑‍🍳","cook"],["👨‍🍳","man cook"],["👩‍🍳","woman cook"],["🧑‍🔧","mechanic"],["👨‍🔧","man mechanic"],["👩‍🔧","woman mechanic"],["🧑‍🏭","factory worker"],["👨‍🏭","man factory worker"],["👩‍🏭","woman factory worker"],["🧑‍💼","office worker"],["👨‍💼","man office worker"],["👩‍💼","woman office worker"],["🧑‍🔬","scientist"],["👨‍🔬","man scientist"],["👩‍🔬","woman scientist"],["🧑‍💻","technologist"],["👨‍💻","man technologist"],["👩‍💻","woman technologist"],["🧑‍🎤","singer"],["👨‍🎤","man singer"],["👩‍🎤","woman singer"],["🧑‍🎨","artist"],["👨‍🎨","man artist"],["👩‍🎨","woman artist"],["🧑‍✈️","pilot"],["👨‍✈️","man pilot"],["👩‍✈️","woman pilot"],["🧑‍🚀","astronaut"],["👨‍🚀","man astronaut"],["👩‍🚀","woman astronaut"],["🧑‍🚒","firefighter"],["👨‍🚒","man firefighter"],["👩‍🚒","woman firefighter"],["👮","police officer"],["👮‍♂️","man police officer"],["👮‍♀️","woman police officer"],["🕵️","detective"],["🕵️‍♂️","man detective"],["🕵️‍♀️","woman detective"],["💂","guard"],["💂‍♂️","man guard"],["💂‍♀️","woman guard"],["🥷","ninja"],["👷","construction worker"],["👷‍♂️","man construction worker"],["👷‍♀️","woman construction worker"],["🫅","person with crown"],["🤴","prince"],["👸","princess"],["👳","person wearing turban"],["👳‍♂️","man wearing turban"],["👳‍♀️","woman wearing turban"],["👲","person with skullcap"],["🧕","woman with headscarf"],["🤵","person in tuxedo"],["🤵‍♂️","man in tuxedo"],["🤵‍♀️","woman in tuxedo"],["👰","person with veil"],["👰‍♂️","man with veil"],["👰‍♀️","woman with veil"],["🤰","pregnant woman"],["🫃","pregnant man"],["🫄","pregnant person"],["🤱","breast-feeding"],["👩‍🍼","woman feeding baby"],["👨‍🍼","man feeding baby"],["🧑‍🍼","person feeding baby"],["👼","baby angel"],["🎅","santa claus"],["🤶","mrs. claus"],["🧑‍🎄","mx claus"],["🦸","superhero"],["🦸‍♂️","man superhero"],["🦸‍♀️","woman superhero"],["🦹","supervillain"],["🦹‍♂️","man supervillain"],["🦹‍♀️","woman supervillain"],["🧙","mage"],["🧙‍♂️","man mage"],["🧙‍♀️","woman mage"],["🧚","fairy"],["🧚‍♂️","man fairy"],["🧚‍♀️","woman fairy"],["🧛","vampire"],["🧛‍♂️","man vampire"],["🧛‍♀️","woman vampire"],["🧜","merperson"],["🧜‍♂️","merman"],["🧜‍♀️","mermaid"],["🧝","elf"],["🧝‍♂️","man elf"],["🧝‍♀️","woman elf"],["🧞","genie"],["🧞‍♂️","man genie"],["🧞‍♀️","woman genie"],["🧟","zombie"],["🧟‍♂️","man zombie"],["🧟‍♀️","woman zombie"],["🧌","troll"],["💆","person getting massage"],["💆‍♂️","man getting massage"],["💆‍♀️","woman getting massage"],["💇","person getting haircut"],["💇‍♂️","man getting haircut"],["💇‍♀️","woman getting haircut"],["🚶","person walking"],["🚶‍♂️","man walking"],["🚶‍♀️","woman walking"],["🚶‍➡️","person walking facing right"],["🚶‍♀️‍➡️","woman walking facing right"],["🚶‍♂️‍➡️","man walking facing right"],["🧍","person standing"],["🧍‍♂️","man standing"],["🧍‍♀️","woman standing"],["🧎","person kneeling"],["🧎‍♂️","man kneeling"],["🧎‍♀️","woman kneeling"],["🧎‍➡️","person kneeling facing right"],["🧎‍♀️‍➡️","woman kneeling facing right"],["🧎‍♂️‍➡️","man kneeling facing right"],["🧑‍🦯","person with white cane"],["🧑‍🦯‍➡️","person with white cane facing right"],["👨‍🦯","man with white cane"],["👨‍🦯‍➡️","man with white cane facing right"],["👩‍🦯","woman with white cane"],["👩‍🦯‍➡️","woman with white cane facing right"],["🧑‍🦼","person in motorized wheelchair"],["🧑‍🦼‍➡️","person in motorized wheelchair facing right"],["👨‍🦼","man in motorized wheelchair"],["👨‍🦼‍➡️","man in motorized wheelchair facing right"],["👩‍🦼","woman in motorized wheelchair"],["👩‍🦼‍➡️","woman in motorized wheelchair facing right"],["🧑‍🦽","person in manual wheelchair"],["🧑‍🦽‍➡️","person in manual wheelchair facing right"],["👨‍🦽","man in manual wheelchair"],["👨‍🦽‍➡️","man in manual wheelchair facing right"],["👩‍🦽","woman in manual wheelchair"],["👩‍🦽‍➡️","woman in manual wheelchair facing right"],["🏃","person running"],["🏃‍♂️","man running"],["🏃‍♀️","woman running"],["🏃‍➡️","person running facing right"],["🏃‍♀️‍➡️","woman running facing right"],["🏃‍♂️‍➡️","man running facing right"],["💃","woman dancing"],["🕺","man dancing"],["🕴️","person in suit levitating"],["👯","people with bunny ears"],["👯‍♂️","men with bunny ears"],["👯‍♀️","women with bunny ears"],["🧖","person in steamy room"],["🧖‍♂️","man in steamy room"],["🧖‍♀️","woman in steamy room"],["🧗","person climbing"],["🧗‍♂️","man climbing"],["🧗‍♀️","woman climbing"],["🤺","person fencing"],["🏇","horse racing"],["⛷️","skier"],["🏂","snowboarder"],["🏌️","person golfing"],["🏌️‍♂️","man golfing"],["🏌️‍♀️","woman golfing"],["🏄","person surfing"],["🏄‍♂️","man surfing"],["🏄‍♀️","woman surfing"],["🚣","person rowing boat"],["🚣‍♂️","man rowing boat"],["🚣‍♀️","woman rowing boat"],["🏊","person swimming"],["🏊‍♂️","man swimming"],["🏊‍♀️","woman swimming"],["⛹️","person bouncing ball"],["⛹️‍♂️","man bouncing ball"],["⛹️‍♀️","woman bouncing ball"],["🏋️","person lifting weights"],["🏋️‍♂️","man lifting weights"],["🏋️‍♀️","woman lifting weights"],["🚴","person biking"],["🚴‍♂️","man biking"],["🚴‍♀️","woman biking"],["🚵","person mountain biking"],["🚵‍♂️","man mountain biking"],["🚵‍♀️","woman mountain biking"],["🤸","person cartwheeling"],["🤸‍♂️","man cartwheeling"],["🤸‍♀️","woman cartwheeling"],["🤼","people wrestling"],["🤼‍♂️","men wrestling"],["🤼‍♀️","women wrestling"],["🤽","person playing water polo"],["🤽‍♂️","man playing water polo"],["🤽‍♀️","woman playing water polo"],["🤾","person playing handball"],["🤾‍♂️","man playing handball"],["🤾‍♀️","woman playing handball"],["🤹","person juggling"],["🤹‍♂️","man juggling"],["🤹‍♀️","woman juggling"],["🧘","person in lotus position"],["🧘‍♂️","man in lotus position"],["🧘‍♀️","woman in lotus position"],["🛀","person taking bath"],["🛌","person in bed"],["🧑‍🤝‍🧑","people holding hands"],["👭","women holding hands"],["👫","woman and man holding hands"],["👬","men holding hands"],["💏","kiss"],["👩‍❤️‍💋‍👨","kiss: woman, man"],["👨‍❤️‍💋‍👨","kiss: man, man"],["👩‍❤️‍💋‍👩","kiss: woman, woman"],["💑","couple with heart"],["👩‍❤️‍👨","couple with heart: woman, man"],["👨‍❤️‍👨","couple with heart: man, man"],["👩‍❤️‍👩","couple with heart: woman, woman"],["👨‍👩‍👦","family: man, woman, boy"],["👨‍👩‍👧","family: man, woman, girl"],["👨‍👩‍👧‍👦","family: man, woman, girl, boy"],["👨‍👩‍👦‍👦","family: man, woman, boy, boy"],["👨‍👩‍👧‍👧","family: man, woman, girl, girl"],["👨‍👨‍👦","family: man, man, boy"],["👨‍👨‍👧","family: man, man, girl"],["👨‍👨‍👧‍👦","family: man, man, girl, boy"],["👨‍👨‍👦‍👦","family: man, man, boy, boy"],["👨‍👨‍👧‍👧","family: man, man, girl, girl"],["👩‍👩‍👦","family: woman, woman, boy"],["👩‍👩‍👧","family: woman, woman, girl"],["👩‍👩‍👧‍👦","family: woman, woman, girl, boy"],["👩‍👩‍👦‍👦","family: woman, woman, boy, boy"],["👩‍👩‍👧‍👧","family: woman, woman, girl, girl"],["👨‍👦","family: man, boy"],["👨‍👦‍👦","family: man, boy, boy"],["👨‍👧","family: man, girl"],["👨‍👧‍👦","family: man, girl, boy"],["👨‍👧‍👧","family: man, girl, girl"],["👩‍👦","family: woman, boy"],["👩‍👦‍👦","family: woman, boy, boy"],["👩‍👧","family: woman, girl"],["👩‍👧‍👦","family: woman, girl, boy"],["👩‍👧‍👧","family: woman, girl, girl"],["🗣️","speaking head"],["👤","bust in silhouette"],["👥","busts in silhouette"],["🫂","people hugging"],["👪","family"],["🧑‍🧑‍🧒","family: adult, adult, child"],["🧑‍🧑‍🧒‍🧒","family: adult, adult, child, child"],["🧑‍🧒","family: adult, child"],["🧑‍🧒‍🧒","family: adult, child, child"],["👣","footprints"]],
+  Animals:[["🐵","monkey face"],["🐒","monkey"],["🦍","gorilla"],["🦧","orangutan"],["🐶","dog face"],["🐕","dog"],["🦮","guide dog"],["🐕‍🦺","service dog"],["🐩","poodle"],["🐺","wolf"],["🦊","fox"],["🦝","raccoon"],["🐱","cat face"],["🐈","cat"],["🐈‍⬛","black cat"],["🦁","lion"],["🐯","tiger face"],["🐅","tiger"],["🐆","leopard"],["🐴","horse face"],["🫎","moose"],["🫏","donkey"],["🐎","horse"],["🦄","unicorn"],["🦓","zebra"],["🦌","deer"],["🦬","bison"],["🐮","cow face"],["🐂","ox"],["🐃","water buffalo"],["🐄","cow"],["🐷","pig face"],["🐖","pig"],["🐗","boar"],["🐽","pig nose"],["🐏","ram"],["🐑","ewe"],["🐐","goat"],["🐪","camel"],["🐫","two-hump camel"],["🦙","llama"],["🦒","giraffe"],["🐘","elephant"],["🦣","mammoth"],["🦏","rhinoceros"],["🦛","hippopotamus"],["🐭","mouse face"],["🐁","mouse"],["🐀","rat"],["🐹","hamster"],["🐰","rabbit face"],["🐇","rabbit"],["🐿️","chipmunk"],["🦫","beaver"],["🦔","hedgehog"],["🦇","bat"],["🐻","bear"],["🐻‍❄️","polar bear"],["🐨","koala"],["🐼","panda"],["🦥","sloth"],["🦦","otter"],["🦨","skunk"],["🦘","kangaroo"],["🦡","badger"],["🐾","paw prints"],["🦃","turkey"],["🐔","chicken"],["🐓","rooster"],["🐣","hatching chick"],["🐤","baby chick"],["🐥","front-facing baby chick"],["🐦","bird"],["🐧","penguin"],["🕊️","dove"],["🦅","eagle"],["🦆","duck"],["🦢","swan"],["🦉","owl"],["🦤","dodo"],["🪶","feather"],["🦩","flamingo"],["🦚","peacock"],["🦜","parrot"],["🪽","wing"],["🐦‍⬛","black bird"],["🪿","goose"],["🐦‍🔥","phoenix"],["🐸","frog"],["🐊","crocodile"],["🐢","turtle"],["🦎","lizard"],["🐍","snake"],["🐲","dragon face"],["🐉","dragon"],["🦕","sauropod"],["🦖","t-rex"],["🐳","spouting whale"],["🐋","whale"],["🐬","dolphin"],["🦭","seal"],["🐟","fish"],["🐠","tropical fish"],["🐡","blowfish"],["🦈","shark"],["🐙","octopus"],["🐚","spiral shell"],["🪸","coral"],["🪼","jellyfish"],["🐌","snail"],["🦋","butterfly"],["🐛","bug"],["🐜","ant"],["🐝","honeybee"],["🪲","beetle"],["🐞","lady beetle"],["🦗","cricket"],["🪳","cockroach"],["🕷️","spider"],["🕸️","spider web"],["🦂","scorpion"],["🦟","mosquito"],["🪰","fly"],["🪱","worm"],["🦠","microbe"]],
+  Plants:[["💐","bouquet"],["🌸","cherry blossom"],["💮","white flower"],["🪷","lotus"],["🏵️","rosette"],["🌹","rose"],["🥀","wilted flower"],["🌺","hibiscus"],["🌻","sunflower"],["🌼","blossom"],["🌷","tulip"],["🪻","hyacinth"],["🌱","seedling"],["🪴","potted plant"],["🌲","evergreen tree"],["🌳","deciduous tree"],["🌴","palm tree"],["🌵","cactus"],["🌾","sheaf of rice"],["🌿","herb"],["☘️","shamrock"],["🍀","four leaf clover"],["🍁","maple leaf"],["🍂","fallen leaf"],["🍃","leaf fluttering in wind"],["🪹","empty nest"],["🪺","nest with eggs"],["🍄","mushroom"]],
+  Food:[["🍇","grapes"],["🍈","melon"],["🍉","watermelon"],["🍊","tangerine"],["🍋","lemon"],["🍋‍🟩","lime"],["🍌","banana"],["🍍","pineapple"],["🥭","mango"],["🍎","red apple"],["🍏","green apple"],["🍐","pear"],["🍑","peach"],["🍒","cherries"],["🍓","strawberry"],["🫐","blueberries"],["🥝","kiwi fruit"],["🍅","tomato"],["🫒","olive"],["🥥","coconut"],["🥑","avocado"],["🍆","eggplant"],["🥔","potato"],["🥕","carrot"],["🌽","ear of corn"],["🌶️","hot pepper"],["🫑","bell pepper"],["🥒","cucumber"],["🥬","leafy green"],["🥦","broccoli"],["🧄","garlic"],["🧅","onion"],["🥜","peanuts"],["🫘","beans"],["🌰","chestnut"],["🫚","ginger root"],["🫛","pea pod"],["🍄‍🟫","brown mushroom"],["🍞","bread"],["🥐","croissant"],["🥖","baguette bread"],["🫓","flatbread"],["🥨","pretzel"],["🥯","bagel"],["🥞","pancakes"],["🧇","waffle"],["🧀","cheese wedge"],["🍖","meat on bone"],["🍗","poultry leg"],["🥩","cut of meat"],["🥓","bacon"],["🍔","hamburger"],["🍟","french fries"],["🍕","pizza"],["🌭","hot dog"],["🥪","sandwich"],["🌮","taco"],["🌯","burrito"],["🫔","tamale"],["🥙","stuffed flatbread"],["🧆","falafel"],["🥚","egg"],["🍳","cooking"],["🥘","shallow pan of food"],["🍲","pot of food"],["🫕","fondue"],["🥣","bowl with spoon"],["🥗","green salad"],["🍿","popcorn"],["🧈","butter"],["🧂","salt"],["🥫","canned food"],["🍱","bento box"],["🍘","rice cracker"],["🍙","rice ball"],["🍚","cooked rice"],["🍛","curry rice"],["🍜","steaming bowl"],["🍝","spaghetti"],["🍠","roasted sweet potato"],["🍢","oden"],["🍣","sushi"],["🍤","fried shrimp"],["🍥","fish cake with swirl"],["🥮","moon cake"],["🍡","dango"],["🥟","dumpling"],["🥠","fortune cookie"],["🥡","takeout box"],["🦀","crab"],["🦞","lobster"],["🦐","shrimp"],["🦑","squid"],["🦪","oyster"],["🍦","soft ice cream"],["🍧","shaved ice"],["🍨","ice cream"],["🍩","doughnut"],["🍪","cookie"],["🎂","birthday cake"],["🍰","shortcake"],["🧁","cupcake"],["🥧","pie"],["🍫","chocolate bar"],["🍬","candy"],["🍭","lollipop"],["🍮","custard"],["🍯","honey pot"],["🍼","baby bottle"],["🥛","glass of milk"],["☕","hot beverage"],["🫖","teapot"],["🍵","teacup without handle"],["🍶","sake"],["🍾","bottle with popping cork"],["🍷","wine glass"],["🍸","cocktail glass"],["🍹","tropical drink"],["🍺","beer mug"],["🍻","clinking beer mugs"],["🥂","clinking glasses"],["🥃","tumbler glass"],["🫗","pouring liquid"],["🥤","cup with straw"],["🧋","bubble tea"],["🧃","beverage box"],["🧉","mate"],["🧊","ice"],["🥢","chopsticks"],["🍽️","fork and knife with plate"],["🍴","fork and knife"],["🥄","spoon"],["🔪","kitchen knife"],["🫙","jar"],["🏺","amphora"]],
+  Travel:[["🌍","globe showing europe-africa"],["🌎","globe showing americas"],["🌏","globe showing asia-australia"],["🌐","globe with meridians"],["🗺️","world map"],["🗾","map of japan"],["🧭","compass"],["🏔️","snow-capped mountain"],["⛰️","mountain"],["🌋","volcano"],["🗻","mount fuji"],["🏕️","camping"],["🏖️","beach with umbrella"],["🏜️","desert"],["🏝️","desert island"],["🏞️","national park"],["🏟️","stadium"],["🏛️","classical building"],["🏗️","building construction"],["🧱","brick"],["🪨","rock"],["🪵","wood"],["🛖","hut"],["🏘️","houses"],["🏚️","derelict house"],["🏠","house"],["🏡","house with garden"],["🏢","office building"],["🏣","japanese post office"],["🏤","post office"],["🏥","hospital"],["🏦","bank"],["🏨","hotel"],["🏩","love hotel"],["🏪","convenience store"],["🏫","school"],["🏬","department store"],["🏭","factory"],["🏯","japanese castle"],["🏰","castle"],["💒","wedding"],["🗼","tokyo tower"],["🗽","statue of liberty"],["⛪","church"],["🕌","mosque"],["🛕","hindu temple"],["🕍","synagogue"],["⛩️","shinto shrine"],["🕋","kaaba"],["⛲","fountain"],["⛺","tent"],["🌁","foggy"],["🌃","night with stars"],["🏙️","cityscape"],["🌄","sunrise over mountains"],["🌅","sunrise"],["🌆","cityscape at dusk"],["🌇","sunset"],["🌉","bridge at night"],["♨️","hot springs"],["🎠","carousel horse"],["🛝","playground slide"],["🎡","ferris wheel"],["🎢","roller coaster"],["💈","barber pole"],["🎪","circus tent"],["🚂","locomotive"],["🚃","railway car"],["🚄","high-speed train"],["🚅","bullet train"],["🚆","train"],["🚇","metro"],["🚈","light rail"],["🚉","station"],["🚊","tram"],["🚝","monorail"],["🚞","mountain railway"],["🚋","tram car"],["🚌","bus"],["🚍","oncoming bus"],["🚎","trolleybus"],["🚐","minibus"],["🚑","ambulance"],["🚒","fire engine"],["🚓","police car"],["🚔","oncoming police car"],["🚕","taxi"],["🚖","oncoming taxi"],["🚗","automobile"],["🚘","oncoming automobile"],["🚙","sport utility vehicle"],["🛻","pickup truck"],["🚚","delivery truck"],["🚛","articulated lorry"],["🚜","tractor"],["🏎️","racing car"],["🏍️","motorcycle"],["🛵","motor scooter"],["🦽","manual wheelchair"],["🦼","motorized wheelchair"],["🛺","auto rickshaw"],["🚲","bicycle"],["🛴","kick scooter"],["🛹","skateboard"],["🛼","roller skate"],["🚏","bus stop"],["🛣️","motorway"],["🛤️","railway track"],["🛢️","oil drum"],["⛽","fuel pump"],["🛞","wheel"],["🚨","police car light"],["🚥","horizontal traffic light"],["🚦","vertical traffic light"],["🛑","stop sign"],["🚧","construction"],["⚓","anchor"],["🛟","ring buoy"],["⛵","sailboat"],["🛶","canoe"],["🚤","speedboat"],["🛳️","passenger ship"],["⛴️","ferry"],["🛥️","motor boat"],["🚢","ship"],["✈️","airplane"],["🛩️","small airplane"],["🛫","airplane departure"],["🛬","airplane arrival"],["🪂","parachute"],["💺","seat"],["🚁","helicopter"],["🚟","suspension railway"],["🚠","mountain cableway"],["🚡","aerial tramway"],["🛰️","satellite"],["🚀","rocket"],["🛸","flying saucer"],["🛎️","bellhop bell"],["🧳","luggage"],["⌛","hourglass done"],["⏳","hourglass not done"],["⌚","watch"],["⏰","alarm clock"],["⏱️","stopwatch"],["⏲️","timer clock"],["🕰️","mantelpiece clock"],["🕛","twelve o’clock"],["🕧","twelve-thirty"],["🕐","one o’clock"],["🕜","one-thirty"],["🕑","two o’clock"],["🕝","two-thirty"],["🕒","three o’clock"],["🕞","three-thirty"],["🕓","four o’clock"],["🕟","four-thirty"],["🕔","five o’clock"],["🕠","five-thirty"],["🕕","six o’clock"],["🕡","six-thirty"],["🕖","seven o’clock"],["🕢","seven-thirty"],["🕗","eight o’clock"],["🕣","eight-thirty"],["🕘","nine o’clock"],["🕤","nine-thirty"],["🕙","ten o’clock"],["🕥","ten-thirty"],["🕚","eleven o’clock"],["🕦","eleven-thirty"],["🌑","new moon"],["🌒","waxing crescent moon"],["🌓","first quarter moon"],["🌔","waxing gibbous moon"],["🌕","full moon"],["🌖","waning gibbous moon"],["🌗","last quarter moon"],["🌘","waning crescent moon"],["🌙","crescent moon"],["🌚","new moon face"],["🌛","first quarter moon face"],["🌜","last quarter moon face"],["🌡️","thermometer"],["☀️","sun"],["🌝","full moon face"],["🌞","sun with face"],["🪐","ringed planet"],["⭐","star"],["🌟","glowing star"],["🌠","shooting star"],["🌌","milky way"],["☁️","cloud"],["⛅","sun behind cloud"],["⛈️","cloud with lightning and rain"],["🌤️","sun behind small cloud"],["🌥️","sun behind large cloud"],["🌦️","sun behind rain cloud"],["🌧️","cloud with rain"],["🌨️","cloud with snow"],["🌩️","cloud with lightning"],["🌪️","tornado"],["🌫️","fog"],["🌬️","wind face"],["🌀","cyclone"],["🌈","rainbow"],["🌂","closed umbrella"],["☂️","umbrella"],["☔","umbrella with rain drops"],["⛱️","umbrella on ground"],["⚡","high voltage"],["❄️","snowflake"],["☃️","snowman"],["⛄","snowman without snow"],["☄️","comet"],["🔥","fire"],["💧","droplet"],["🌊","water wave"]],
+  Objects:[["👓","glasses"],["🕶️","sunglasses"],["🥽","goggles"],["🥼","lab coat"],["🦺","safety vest"],["👔","necktie"],["👕","t-shirt"],["👖","jeans"],["🧣","scarf"],["🧤","gloves"],["🧥","coat"],["🧦","socks"],["👗","dress"],["👘","kimono"],["🥻","sari"],["🩱","one-piece swimsuit"],["🩲","briefs"],["🩳","shorts"],["👙","bikini"],["👚","woman’s clothes"],["🪭","folding hand fan"],["👛","purse"],["👜","handbag"],["👝","clutch bag"],["🛍️","shopping bags"],["🎒","backpack"],["🩴","thong sandal"],["👞","man’s shoe"],["👟","running shoe"],["🥾","hiking boot"],["🥿","flat shoe"],["👠","high-heeled shoe"],["👡","woman’s sandal"],["🩰","ballet shoes"],["👢","woman’s boot"],["🪮","hair pick"],["👑","crown"],["👒","woman’s hat"],["🎩","top hat"],["🎓","graduation cap"],["🧢","billed cap"],["🪖","military helmet"],["⛑️","rescue worker’s helmet"],["📿","prayer beads"],["💄","lipstick"],["💍","ring"],["💎","gem stone"],["🔇","muted speaker"],["🔈","speaker low volume"],["🔉","speaker medium volume"],["🔊","speaker high volume"],["📢","loudspeaker"],["📣","megaphone"],["📯","postal horn"],["🔔","bell"],["🔕","bell with slash"],["🎼","musical score"],["🎵","musical note"],["🎶","musical notes"],["🎙️","studio microphone"],["🎚️","level slider"],["🎛️","control knobs"],["🎤","microphone"],["🎧","headphone"],["📻","radio"],["🎷","saxophone"],["🪗","accordion"],["🎸","guitar"],["🎹","musical keyboard"],["🎺","trumpet"],["🎻","violin"],["🪕","banjo"],["🥁","drum"],["🪘","long drum"],["🪇","maracas"],["🪈","flute"],["📱","mobile phone"],["📲","mobile phone with arrow"],["☎️","telephone"],["📞","telephone receiver"],["📟","pager"],["📠","fax machine"],["🔋","battery"],["🪫","low battery"],["🔌","electric plug"],["💻","laptop"],["🖥️","desktop computer"],["🖨️","printer"],["⌨️","keyboard"],["🖱️","computer mouse"],["🖲️","trackball"],["💽","computer disk"],["💾","floppy disk"],["💿","optical disk"],["📀","dvd"],["🧮","abacus"],["🎥","movie camera"],["🎞️","film frames"],["📽️","film projector"],["🎬","clapper board"],["📺","television"],["📷","camera"],["📸","camera with flash"],["📹","video camera"],["📼","videocassette"],["🔍","magnifying glass tilted left"],["🔎","magnifying glass tilted right"],["🕯️","candle"],["💡","light bulb"],["🔦","flashlight"],["🏮","red paper lantern"],["🪔","diya lamp"],["📔","notebook with decorative cover"],["📕","closed book"],["📖","open book"],["📗","green book"],["📘","blue book"],["📙","orange book"],["📚","books"],["📓","notebook"],["📒","ledger"],["📃","page with curl"],["📜","scroll"],["📄","page facing up"],["📰","newspaper"],["🗞️","rolled-up newspaper"],["📑","bookmark tabs"],["🔖","bookmark"],["🏷️","label"],["💰","money bag"],["🪙","coin"],["💴","yen banknote"],["💵","dollar banknote"],["💶","euro banknote"],["💷","pound banknote"],["💸","money with wings"],["💳","credit card"],["🧾","receipt"],["💹","chart increasing with yen"],["✉️","envelope"],["📧","e-mail"],["📨","incoming envelope"],["📩","envelope with arrow"],["📤","outbox tray"],["📥","inbox tray"],["📦","package"],["📫","closed mailbox with raised flag"],["📪","closed mailbox with lowered flag"],["📬","open mailbox with raised flag"],["📭","open mailbox with lowered flag"],["📮","postbox"],["🗳️","ballot box with ballot"],["✏️","pencil"],["✒️","black nib"],["🖋️","fountain pen"],["🖊️","pen"],["🖌️","paintbrush"],["🖍️","crayon"],["📝","memo"],["💼","briefcase"],["📁","file folder"],["📂","open file folder"],["🗂️","card index dividers"],["📅","calendar"],["📆","tear-off calendar"],["🗒️","spiral notepad"],["🗓️","spiral calendar"],["📇","card index"],["📈","chart increasing"],["📉","chart decreasing"],["📊","bar chart"],["📋","clipboard"],["📌","pushpin"],["📍","round pushpin"],["📎","paperclip"],["🖇️","linked paperclips"],["📏","straight ruler"],["📐","triangular ruler"],["✂️","scissors"],["🗃️","card file box"],["🗄️","file cabinet"],["🗑️","wastebasket"],["🔒","locked"],["🔓","unlocked"],["🔏","locked with pen"],["🔐","locked with key"],["🔑","key"],["🗝️","old key"],["🔨","hammer"],["🪓","axe"],["⛏️","pick"],["⚒️","hammer and pick"],["🛠️","hammer and wrench"],["🗡️","dagger"],["⚔️","crossed swords"],["💣","bomb"],["🪃","boomerang"],["🏹","bow and arrow"],["🛡️","shield"],["🪚","carpentry saw"],["🔧","wrench"],["🪛","screwdriver"],["🔩","nut and bolt"],["⚙️","gear"],["🗜️","clamp"],["⚖️","balance scale"],["🦯","white cane"],["🔗","link"],["⛓️‍💥","broken chain"],["⛓️","chains"],["🪝","hook"],["🧰","toolbox"],["🧲","magnet"],["🪜","ladder"],["⚗️","alembic"],["🧪","test tube"],["🧫","petri dish"],["🧬","dna"],["🔬","microscope"],["🔭","telescope"],["📡","satellite antenna"],["💉","syringe"],["🩸","drop of blood"],["💊","pill"],["🩹","adhesive bandage"],["🩼","crutch"],["🩺","stethoscope"],["🩻","x-ray"],["🚪","door"],["🛗","elevator"],["🪞","mirror"],["🪟","window"],["🛏️","bed"],["🛋️","couch and lamp"],["🪑","chair"],["🚽","toilet"],["🪠","plunger"],["🚿","shower"],["🛁","bathtub"],["🪤","mouse trap"],["🪒","razor"],["🧴","lotion bottle"],["🧷","safety pin"],["🧹","broom"],["🧺","basket"],["🧻","roll of paper"],["🪣","bucket"],["🧼","soap"],["🫧","bubbles"],["🪥","toothbrush"],["🧽","sponge"],["🧯","fire extinguisher"],["🛒","shopping cart"],["🚬","cigarette"],["⚰️","coffin"],["🪦","headstone"],["⚱️","funeral urn"],["🧿","nazar amulet"],["🪬","hamsa"],["🗿","moai"],["🪧","placard"],["🪪","identification card"]],
+  Symbols:[["🏧","atm sign"],["🚮","litter in bin sign"],["🚰","potable water"],["♿","wheelchair symbol"],["🚹","men’s room"],["🚺","women’s room"],["🚻","restroom"],["🚼","baby symbol"],["🚾","water closet"],["🛂","passport control"],["🛃","customs"],["🛄","baggage claim"],["🛅","left luggage"],["⚠️","warning"],["🚸","children crossing"],["⛔","no entry"],["🚫","prohibited"],["🚳","no bicycles"],["🚭","no smoking"],["🚯","no littering"],["🚱","non-potable water"],["🚷","no pedestrians"],["📵","no mobile phones"],["🔞","no one under eighteen"],["☢️","radioactive"],["☣️","biohazard"],["⬆️","up arrow"],["↗️","up-right arrow"],["➡️","right arrow"],["↘️","down-right arrow"],["⬇️","down arrow"],["↙️","down-left arrow"],["⬅️","left arrow"],["↖️","up-left arrow"],["↕️","up-down arrow"],["↔️","left-right arrow"],["↩️","right arrow curving left"],["↪️","left arrow curving right"],["⤴️","right arrow curving up"],["⤵️","right arrow curving down"],["🔃","clockwise vertical arrows"],["🔄","counterclockwise arrows button"],["🔙","back arrow"],["🔚","end arrow"],["🔛","on! arrow"],["🔜","soon arrow"],["🔝","top arrow"],["🛐","place of worship"],["⚛️","atom symbol"],["🕉️","om"],["✡️","star of david"],["☸️","wheel of dharma"],["☯️","yin yang"],["✝️","latin cross"],["☦️","orthodox cross"],["☪️","star and crescent"],["☮️","peace symbol"],["🕎","menorah"],["🔯","dotted six-pointed star"],["🪯","khanda"],["♈","aries"],["♉","taurus"],["♊","gemini"],["♋","cancer"],["♌","leo"],["♍","virgo"],["♎","libra"],["♏","scorpio"],["♐","sagittarius"],["♑","capricorn"],["♒","aquarius"],["♓","pisces"],["⛎","ophiuchus"],["🔀","shuffle tracks button"],["🔁","repeat button"],["🔂","repeat single button"],["▶️","play button"],["⏩","fast-forward button"],["⏭️","next track button"],["⏯️","play or pause button"],["◀️","reverse button"],["⏪","fast reverse button"],["⏮️","last track button"],["🔼","upwards button"],["⏫","fast up button"],["🔽","downwards button"],["⏬","fast down button"],["⏸️","pause button"],["⏹️","stop button"],["⏺️","record button"],["⏏️","eject button"],["🎦","cinema"],["🔅","dim button"],["🔆","bright button"],["📶","antenna bars"],["🛜","wireless"],["📳","vibration mode"],["📴","mobile phone off"],["♀️","female sign"],["♂️","male sign"],["⚧️","transgender symbol"],["✖️","multiply"],["➕","plus"],["➖","minus"],["➗","divide"],["🟰","heavy equals sign"],["♾️","infinity"],["‼️","double exclamation mark"],["⁉️","exclamation question mark"],["❓","red question mark"],["❔","white question mark"],["❕","white exclamation mark"],["❗","red exclamation mark"],["〰️","wavy dash"],["💱","currency exchange"],["💲","heavy dollar sign"],["⚕️","medical symbol"],["♻️","recycling symbol"],["⚜️","fleur-de-lis"],["🔱","trident emblem"],["📛","name badge"],["🔰","japanese symbol for beginner"],["⭕","hollow red circle"],["✅","check mark button"],["☑️","check box with check"],["✔️","check mark"],["❌","cross mark"],["❎","cross mark button"],["➰","curly loop"],["➿","double curly loop"],["〽️","part alternation mark"],["✳️","eight-spoked asterisk"],["✴️","eight-pointed star"],["❇️","sparkle"],["©️","copyright"],["®️","registered"],["™️","trade mark"],["#️⃣","keycap: #"],["*️⃣","keycap: *"],["0️⃣","keycap: 0"],["1️⃣","keycap: 1"],["2️⃣","keycap: 2"],["3️⃣","keycap: 3"],["4️⃣","keycap: 4"],["5️⃣","keycap: 5"],["6️⃣","keycap: 6"],["7️⃣","keycap: 7"],["8️⃣","keycap: 8"],["9️⃣","keycap: 9"],["🔟","keycap: 10"],["🔠","input latin uppercase"],["🔡","input latin lowercase"],["🔢","input numbers"],["🔣","input symbols"],["🔤","input latin letters"],["🅰️","a button (blood type)"],["🆎","ab button (blood type)"],["🅱️","b button (blood type)"],["🆑","cl button"],["🆒","cool button"],["🆓","free button"],["ℹ️","information"],["🆔","id button"],["Ⓜ️","circled m"],["🆕","new button"],["🆖","ng button"],["🅾️","o button (blood type)"],["🆗","ok button"],["🅿️","p button"],["🆘","sos button"],["🆙","up! button"],["🆚","vs button"],["🈁","japanese “here” button"],["🈂️","japanese “service charge” button"],["🈷️","japanese “monthly amount” button"],["🈶","japanese “not free of charge” button"],["🈯","japanese “reserved” button"],["🉐","japanese “bargain” button"],["🈹","japanese “discount” button"],["🈚","japanese “free of charge” button"],["🈲","japanese “prohibited” button"],["🉑","japanese “acceptable” button"],["🈸","japanese “application” button"],["🈴","japanese “passing grade” button"],["🈳","japanese “vacancy” button"],["㊗️","japanese “congratulations” button"],["㊙️","japanese “secret” button"],["🈺","japanese “open for business” button"],["🈵","japanese “no vacancy” button"],["🔴","red circle"],["🟠","orange circle"],["🟡","yellow circle"],["🟢","green circle"],["🔵","blue circle"],["🟣","purple circle"],["🟤","brown circle"],["⚫","black circle"],["⚪","white circle"],["🟥","red square"],["🟧","orange square"],["🟨","yellow square"],["🟩","green square"],["🟦","blue square"],["🟪","purple square"],["🟫","brown square"],["⬛","black large square"],["⬜","white large square"],["◼️","black medium square"],["◻️","white medium square"],["◾","black medium-small square"],["◽","white medium-small square"],["▪️","black small square"],["▫️","white small square"],["🔶","large orange diamond"],["🔷","large blue diamond"],["🔸","small orange diamond"],["🔹","small blue diamond"],["🔺","red triangle pointed up"],["🔻","red triangle pointed down"],["💠","diamond with a dot"],["🔘","radio button"],["🔳","white square button"],["🔲","black square button"]],
+  Activities:[["🎃","jack-o-lantern"],["🎄","christmas tree"],["🎆","fireworks"],["🎇","sparkler"],["🧨","firecracker"],["✨","sparkles"],["🎈","balloon"],["🎉","party popper"],["🎊","confetti ball"],["🎋","tanabata tree"],["🎍","pine decoration"],["🎎","japanese dolls"],["🎏","carp streamer"],["🎐","wind chime"],["🎑","moon viewing ceremony"],["🧧","red envelope"],["🎀","ribbon"],["🎁","wrapped gift"],["🎗️","reminder ribbon"],["🎟️","admission tickets"],["🎫","ticket"],["🎖️","military medal"],["🏆","trophy"],["🏅","sports medal"],["🥇","1st place medal"],["🥈","2nd place medal"],["🥉","3rd place medal"],["⚽","soccer ball"],["⚾","baseball"],["🥎","softball"],["🏀","basketball"],["🏐","volleyball"],["🏈","american football"],["🏉","rugby football"],["🎾","tennis"],["🥏","flying disc"],["🎳","bowling"],["🏏","cricket game"],["🏑","field hockey"],["🏒","ice hockey"],["🥍","lacrosse"],["🏓","ping pong"],["🏸","badminton"],["🥊","boxing glove"],["🥋","martial arts uniform"],["🥅","goal net"],["⛳","flag in hole"],["⛸️","ice skate"],["🎣","fishing pole"],["🤿","diving mask"],["🎽","running shirt"],["🎿","skis"],["🛷","sled"],["🥌","curling stone"],["🎯","bullseye"],["🪀","yo-yo"],["🪁","kite"],["🔫","water pistol"],["🎱","pool 8 ball"],["🔮","crystal ball"],["🪄","magic wand"],["🎮","video game"],["🕹️","joystick"],["🎰","slot machine"],["🎲","game die"],["🧩","puzzle piece"],["🧸","teddy bear"],["🪅","piñata"],["🪩","mirror ball"],["🪆","nesting dolls"],["♠️","spade suit"],["♥️","heart suit"],["♦️","diamond suit"],["♣️","club suit"],["♟️","chess pawn"],["🃏","joker"],["🀄","mahjong red dragon"],["🎴","flower playing cards"],["🎭","performing arts"],["🖼️","framed picture"],["🎨","artist palette"],["🧵","thread"],["🪡","sewing needle"],["🧶","yarn"],["🪢","knot"]],
+  Flags:[["🏁","chequered flag"],["🚩","triangular flag"],["🎌","crossed flags"],["🏴","black flag"],["🏳️","white flag"],["🏳️‍🌈","rainbow flag"],["🏳️‍⚧️","transgender flag"],["🏴‍☠️","pirate flag"],["🇦🇨","flag: ascension island"],["🇦🇩","flag: andorra"],["🇦🇪","flag: united arab emirates"],["🇦🇫","flag: afghanistan"],["🇦🇬","flag: antigua & barbuda"],["🇦🇮","flag: anguilla"],["🇦🇱","flag: albania"],["🇦🇲","flag: armenia"],["🇦🇴","flag: angola"],["🇦🇶","flag: antarctica"],["🇦🇷","flag: argentina"],["🇦🇸","flag: american samoa"],["🇦🇹","flag: austria"],["🇦🇺","flag: australia"],["🇦🇼","flag: aruba"],["🇦🇽","flag: åland islands"],["🇦🇿","flag: azerbaijan"],["🇧🇦","flag: bosnia & herzegovina"],["🇧🇧","flag: barbados"],["🇧🇩","flag: bangladesh"],["🇧🇪","flag: belgium"],["🇧🇫","flag: burkina faso"],["🇧🇬","flag: bulgaria"],["🇧🇭","flag: bahrain"],["🇧🇮","flag: burundi"],["🇧🇯","flag: benin"],["🇧🇱","flag: st. barthélemy"],["🇧🇲","flag: bermuda"],["🇧🇳","flag: brunei"],["🇧🇴","flag: bolivia"],["🇧🇶","flag: caribbean netherlands"],["🇧🇷","flag: brazil"],["🇧🇸","flag: bahamas"],["🇧🇹","flag: bhutan"],["🇧🇻","flag: bouvet island"],["🇧🇼","flag: botswana"],["🇧🇾","flag: belarus"],["🇧🇿","flag: belize"],["🇨🇦","flag: canada"],["🇨🇨","flag: cocos (keeling) islands"],["🇨🇩","flag: congo - kinshasa"],["🇨🇫","flag: central african republic"],["🇨🇬","flag: congo - brazzaville"],["🇨🇭","flag: switzerland"],["🇨🇮","flag: côte d’ivoire"],["🇨🇰","flag: cook islands"],["🇨🇱","flag: chile"],["🇨🇲","flag: cameroon"],["🇨🇳","flag: china"],["🇨🇴","flag: colombia"],["🇨🇵","flag: clipperton island"],["🇨🇷","flag: costa rica"],["🇨🇺","flag: cuba"],["🇨🇻","flag: cape verde"],["🇨🇼","flag: curaçao"],["🇨🇽","flag: christmas island"],["🇨🇾","flag: cyprus"],["🇨🇿","flag: czechia"],["🇩🇪","flag: germany"],["🇩🇬","flag: diego garcia"],["🇩🇯","flag: djibouti"],["🇩🇰","flag: denmark"],["🇩🇲","flag: dominica"],["🇩🇴","flag: dominican republic"],["🇩🇿","flag: algeria"],["🇪🇦","flag: ceuta & melilla"],["🇪🇨","flag: ecuador"],["🇪🇪","flag: estonia"],["🇪🇬","flag: egypt"],["🇪🇭","flag: western sahara"],["🇪🇷","flag: eritrea"],["🇪🇸","flag: spain"],["🇪🇹","flag: ethiopia"],["🇪🇺","flag: european union"],["🇫🇮","flag: finland"],["🇫🇯","flag: fiji"],["🇫🇰","flag: falkland islands"],["🇫🇲","flag: micronesia"],["🇫🇴","flag: faroe islands"],["🇫🇷","flag: france"],["🇬🇦","flag: gabon"],["🇬🇧","flag: united kingdom"],["🇬🇩","flag: grenada"],["🇬🇪","flag: georgia"],["🇬🇫","flag: french guiana"],["🇬🇬","flag: guernsey"],["🇬🇭","flag: ghana"],["🇬🇮","flag: gibraltar"],["🇬🇱","flag: greenland"],["🇬🇲","flag: gambia"],["🇬🇳","flag: guinea"],["🇬🇵","flag: guadeloupe"],["🇬🇶","flag: equatorial guinea"],["🇬🇷","flag: greece"],["🇬🇸","flag: south georgia & south sandwich islands"],["🇬🇹","flag: guatemala"],["🇬🇺","flag: guam"],["🇬🇼","flag: guinea-bissau"],["🇬🇾","flag: guyana"],["🇭🇰","flag: hong kong sar china"],["🇭🇲","flag: heard & mcdonald islands"],["🇭🇳","flag: honduras"],["🇭🇷","flag: croatia"],["🇭🇹","flag: haiti"],["🇭🇺","flag: hungary"],["🇮🇨","flag: canary islands"],["🇮🇩","flag: indonesia"],["🇮🇪","flag: ireland"],["🇮🇱","flag: israel"],["🇮🇲","flag: isle of man"],["🇮🇳","flag: india"],["🇮🇴","flag: british indian ocean territory"],["🇮🇶","flag: iraq"],["🇮🇷","flag: iran"],["🇮🇸","flag: iceland"],["🇮🇹","flag: italy"],["🇯🇪","flag: jersey"],["🇯🇲","flag: jamaica"],["🇯🇴","flag: jordan"],["🇯🇵","flag: japan"],["🇰🇪","flag: kenya"],["🇰🇬","flag: kyrgyzstan"],["🇰🇭","flag: cambodia"],["🇰🇮","flag: kiribati"],["🇰🇲","flag: comoros"],["🇰🇳","flag: st. kitts & nevis"],["🇰🇵","flag: north korea"],["🇰🇷","flag: south korea"],["🇰🇼","flag: kuwait"],["🇰🇾","flag: cayman islands"],["🇰🇿","flag: kazakhstan"],["🇱🇦","flag: laos"],["🇱🇧","flag: lebanon"],["🇱🇨","flag: st. lucia"],["🇱🇮","flag: liechtenstein"],["🇱🇰","flag: sri lanka"],["🇱🇷","flag: liberia"],["🇱🇸","flag: lesotho"],["🇱🇹","flag: lithuania"],["🇱🇺","flag: luxembourg"],["🇱🇻","flag: latvia"],["🇱🇾","flag: libya"],["🇲🇦","flag: morocco"],["🇲🇨","flag: monaco"],["🇲🇩","flag: moldova"],["🇲🇪","flag: montenegro"],["🇲🇫","flag: st. martin"],["🇲🇬","flag: madagascar"],["🇲🇭","flag: marshall islands"],["🇲🇰","flag: north macedonia"],["🇲🇱","flag: mali"],["🇲🇲","flag: myanmar (burma)"],["🇲🇳","flag: mongolia"],["🇲🇴","flag: macao sar china"],["🇲🇵","flag: northern mariana islands"],["🇲🇶","flag: martinique"],["🇲🇷","flag: mauritania"],["🇲🇸","flag: montserrat"],["🇲🇹","flag: malta"],["🇲🇺","flag: mauritius"],["🇲🇻","flag: maldives"],["🇲🇼","flag: malawi"],["🇲🇽","flag: mexico"],["🇲🇾","flag: malaysia"],["🇲🇿","flag: mozambique"],["🇳🇦","flag: namibia"],["🇳🇨","flag: new caledonia"],["🇳🇪","flag: niger"],["🇳🇫","flag: norfolk island"],["🇳🇬","flag: nigeria"],["🇳🇮","flag: nicaragua"],["🇳🇱","flag: netherlands"],["🇳🇴","flag: norway"],["🇳🇵","flag: nepal"],["🇳🇷","flag: nauru"],["🇳🇺","flag: niue"],["🇳🇿","flag: new zealand"],["🇴🇲","flag: oman"],["🇵🇦","flag: panama"],["🇵🇪","flag: peru"],["🇵🇫","flag: french polynesia"],["🇵🇬","flag: papua new guinea"],["🇵🇭","flag: philippines"],["🇵🇰","flag: pakistan"],["🇵🇱","flag: poland"],["🇵🇲","flag: st. pierre & miquelon"],["🇵🇳","flag: pitcairn islands"],["🇵🇷","flag: puerto rico"],["🇵🇸","flag: palestinian territories"],["🇵🇹","flag: portugal"],["🇵🇼","flag: palau"],["🇵🇾","flag: paraguay"],["🇶🇦","flag: qatar"],["🇷🇪","flag: réunion"],["🇷🇴","flag: romania"],["🇷🇸","flag: serbia"],["🇷🇺","flag: russia"],["🇷🇼","flag: rwanda"],["🇸🇦","flag: saudi arabia"],["🇸🇧","flag: solomon islands"],["🇸🇨","flag: seychelles"],["🇸🇩","flag: sudan"],["🇸🇪","flag: sweden"],["🇸🇬","flag: singapore"],["🇸🇭","flag: st. helena"],["🇸🇮","flag: slovenia"],["🇸🇯","flag: svalbard & jan mayen"],["🇸🇰","flag: slovakia"],["🇸🇱","flag: sierra leone"],["🇸🇲","flag: san marino"],["🇸🇳","flag: senegal"],["🇸🇴","flag: somalia"],["🇸🇷","flag: suriname"],["🇸🇸","flag: south sudan"],["🇸🇹","flag: são tomé & príncipe"],["🇸🇻","flag: el salvador"],["🇸🇽","flag: sint maarten"],["🇸🇾","flag: syria"],["🇸🇿","flag: eswatini"],["🇹🇦","flag: tristan da cunha"],["🇹🇨","flag: turks & caicos islands"],["🇹🇩","flag: chad"],["🇹🇫","flag: french southern territories"],["🇹🇬","flag: togo"],["🇹🇭","flag: thailand"],["🇹🇯","flag: tajikistan"],["🇹🇰","flag: tokelau"],["🇹🇱","flag: timor-leste"],["🇹🇲","flag: turkmenistan"],["🇹🇳","flag: tunisia"],["🇹🇴","flag: tonga"],["🇹🇷","flag: türkiye"],["🇹🇹","flag: trinidad & tobago"],["🇹🇻","flag: tuvalu"],["🇹🇼","flag: taiwan"],["🇹🇿","flag: tanzania"],["🇺🇦","flag: ukraine"],["🇺🇬","flag: uganda"],["🇺🇲","flag: u.s. outlying islands"],["🇺🇳","flag: united nations"],["🇺🇸","flag: united states"],["🇺🇾","flag: uruguay"],["🇺🇿","flag: uzbekistan"],["🇻🇦","flag: vatican city"],["🇻🇨","flag: st. vincent & grenadines"],["🇻🇪","flag: venezuela"],["🇻🇬","flag: british virgin islands"],["🇻🇮","flag: u.s. virgin islands"],["🇻🇳","flag: vietnam"],["🇻🇺","flag: vanuatu"],["🇼🇫","flag: wallis & futuna"],["🇼🇸","flag: samoa"],["🇽🇰","flag: kosovo"],["🇾🇪","flag: yemen"],["🇾🇹","flag: mayotte"],["🇿🇦","flag: south africa"],["🇿🇲","flag: zambia"],["🇿🇼","flag: zimbabwe"],["🏴󠁧󠁢󠁥󠁮󠁧󠁿","flag: england"],["🏴󠁧󠁢󠁳󠁣󠁴󠁿","flag: scotland"],["🏴󠁧󠁢󠁷󠁬󠁳󠁿","flag: wales"]]
+};
+
+// Search keywords per emoji, in DATA order (Unicode CLDR annotations + emojilib).
+const KW = `cheerful cheery grin happy laugh nice smile smiling teeth joy d smiley|awesome grin happy mouth open smile smiling teeth yay joy haha d funny smiley|eye grin happy laugh lol mouth open smile joy funny haha like d pleased smiley|eye grin grinning happy nice smile teeth joy kawaii|closed eyes haha hahaha happy laugh lol mouth open rofl smile smiling joy satisfied glad xd big grin laughing tightly|cold dejected excited mouth nervous open smile smiling stress stressed hot happy laugh relief exercise|crying face funny haha happy hehe hilarious joy laugh lmao lol rofl roflmao tear rotfl|crying feels funny haha happy hehe hilarious laugh lmao lol rofl roflmao tear cry weep happytears laughing|happy smile fine this|hehe smile flipped silly sarcasm|disappear dissolve embarrassed haha heat hot liquid lol melt sarcasm sarcastic dread|flirt heartbreaker sexy slide tease wink winks happy mischievous secret smile eye winky|blush eye glad satisfied smile happy flushed crush embarrassed shy joy proud smiley|angel angelic angels blessed fairy fairytale fantasy happy innocent peaceful smile spirit tale heaven|3 adore crush heart ily love romance smile you like affection valentines infatuation eyes three|143 bae eye feels hearts ily kisses love romance romantic smile xoxo like affection valentines infatuation crush shaped|excited eyes face grinning smile starry eyed wow|adorbs bae flirt heart ily love lover miss muah romantic smooch xoxo you like affection valentines infatuation blow kissing throwing|143 date dating flirt ily kiss love smooch smooches xoxo you like 3 valentines infatuation duck kissy whistling|happy outlined relaxed smile blush massage happiness pleased smiley white|143 bae blush date dating eye flirt ily kisses smooches xoxo love like affection valentines infatuation kiss kissy|143 closed date dating eye flirt ily kiss kisses love night smile affection valentines infatuation kissy whistle whistling|glad grateful happy joy pain proud relieved smile smiley touched sad cry pretend|delicious eat full hungry savor smile smiling tasty um yum yummy happy joy tongue silly nom savouring goofy lick licking lips|awesome cool nice party stuck out sweet prank childish playful mischievous smile cheeky|crazy epic eye funny joke loopy nutty party stuck out wacky weirdo wink yolo prank childish playful mischievous smile silly|crazy eye eyes goofy large small excited grinning one wacky wild|closed eye eyes gross horrible omg stuck out taste whatever yolo prank playful mischievous smile tightly|paid rich dollar eyes sign|hug hugging smile hugs|giggle giggling oops realization secret shock sudden surprise whoops blushing covering eyes quiet smiling|amazement awe disbelief embarrass gasp omg quiet scared shock surprise silence secret|captivated embarrass hide hiding peek peep scared shy stare frightening embarrassing|quiet shh shush shhh closed covering finger hush lips silence|chin consider hmm ponder pondering wondering hmmm think shade thinker throwing thumb|good luck ma am ok respect salute sir troops yes sunny|keep quiet secret shut zip sealed hush lips silence|disapproval disbelief distrust emoji hmm mild skeptic skeptical skepticism surprise what scepticism suspicious colbert one rock|awkward blank deadpan expressionless fine jealous meh oh shade straight unamused unhappy unimpressed whatever indifference faced mouth|awkward dead fine inexpressive jealous meh not oh omg straight uh unhappy unimpressed whatever indifferent deadpan mouth unexpressive|awkward blank expressionless mouthless mute quiet secret silence silent speechless no|depressed disappear hidden hide introvert invisible meh whatever wtv lonely isolation depression|absentminded fog head shower steam dream brain forgetful haze impractical unrealistic|boss dapper flirt homie kidding leer shade slick sly smirk smug snicker suave suspicious swag smile mean prank sarcasm flirting sexual suggestive|bored fine jealous jel jelly pissed smh ugh uhh unhappy weird whatever indifference straight serious sarcasm unimpressed skeptical dubious side eye dissatisfied meh|eyeroll shade ugh whatever frustrated eye roll|awk awkward dentist grimace grinning smile smiling teeth eek nervous|blow blowing exhale exhausted gasp groan relief sigh smiley smoke whisper whistle relieve tired|liar lie pinocchio long nose|crazy daze earthquake omg panic shock surprise vibrate whoa wow dizzy blurry|no shake disapprove indiffernt left|nod yes down|calm peace relief zen relaxed phew massage happiness content pleased whew|awful bored dejected died disappointed losing lost sad sucks depressed upset sadface sorrowful|crying good night sad sleep sleeping tired rest nap bubble side snot tear|drool|bed bedtime good goodnight nap night sleep tired whatever yawn zzz sleepy snoring|cold dentist dermatologist doctor dr germs medicine sick ill disease covid coronavirus surgical|ill sick temperature cold fever covid|hurt injury ouch injured clumsy bandaged|gross nasty sick vomit green throw up ill barf disgust disgusted|barf ew gross puke sick spew throw up vomit ill mouth open throwing|fever flu gesundheit sick sneeze allergy achoo|dying feverish heat panting red faced stroke sweating tongue overheated|blue faced freezing frostbite icicles subzero teeth frozen ice|dizzy drunk eyes intoxicated mouth tipsy uneven wavy groggy|dead dizzy feels knocked sick tired spent unconscious xox cross spiral|confused dizzy hypnotized omg smiley trouble whoa woah woozy sick ill nauseous nausea|blown explode mind mindblown no shocked way face blowing explosion mad|cowgirl|bday birthday celebrate celebration excited happy hat hooray horn party woohoo|disguise eyebrow glasses incognito moustache mustache nose person spy tache tash pretent brows|awesome beach bright bro chilling cool rad relaxed shades slay smile style swag win summer sunglass best eye eyewear friends glasses mutual snapchat sun weather|brainy clever expert geek gifted glasses intelligent smart nerdy dork smiling|classy fancy rich stuffy wealthy exploration inspection|befuddled confusing dunno frown hm meh not sad sorry sure indifference huh weird hmmm nonplussed puzzled s|confused confusion disappointed doubt doubtful frustrated frustration meh skeptical unsure whatever wtv skeptic confuse indifferent|anxious butterflies nerves nervous sad stress stressed surprised worry concern sadface|frown sad disappointed upset unhappy|frown sad upset megafrown unhappy white|believe forgot omg shocked surprised sympathy unbelievable unreal whoa wow you surprise impressed o|epic omg stunned surprised whoa woah woo shh silence speechless surprise|cost no omg shocked totally way xox surprised poisoned amazed drunk gasp gasping|amazed awkward crazy dazed dead disbelief embarrassed geez heat hot impressed jeez what wow blush shy flattered blushing eyes open shame wide|begging big eyes mercy not please pretty puppy sad why cry tears grievance glossy simp|admiration aww cry embarrassed feelings grateful gratitude joy please proud resist sad touched angry|caught frown guard scared scary surprise what wow aw yawning|forgot scared scary stressed surprise unhappy what wow stunned nervous pained|afraid anxious blame fear scared worried terrified nervous oops shocked surprised|blue cold eek mouth nervous open rushed scared yikes concerned|anxious call close complicated disappointed not sweat time whew phew nervous eyebrow|awful cry feels miss sad tear triste unhappy tears depressed upset|bawling cry sad sob tear tears unhappy sobbing upset depressed|epic fearful munch scared scream screamer shocked surprised woah omg alone home horror|annoyed confused cringe distraught feels frustrated mad sad sick unwell oops s mouth quivering scrunched|concentrate concentration focus headache persevere sick no upset oops eyes helpless scrunched struggling|awful blame dejected fail losing sad unhappy upset depressed sadface|close cold feels headache nervous sad scared yikes hot tired exercise hard work|crying fail feels hungry mad nooo sad sleepy tired unhappy frustrated upset distraught wailing|cost feels nap sad sneeze sick whine upset frustrated distraught exhausted fed up|bedtime bored goodnight nap night sleep sleepy tired whatever yawn zzz|anger angry feels fume fuming furious fury mad triumph unhappy won gas phew proud pride airing frustrated grievances look smug steaming|anger angry feels mad maddening pouting rage red shade unhappy upset hate despise grumpy pout|anger blame feels frustrated mad maddening rage shade unhappy upset annoyed grumpy|censor cursing cussing mad pissed swearing profanity expletive covering foul grawlix over serious|demon devil evil fairy fairytale fantasy purple shade smile tale happy imp red|demon devil evil fairy fairytale fantasy imp mischievous purple shade tale goblin sad|body dead death face fairy fairytale i m lmao monster tale yolo skeleton creepy danger grey halloween poison|bone dead death face monster poison danger deadly scary pirate evil body halloween|bs comic doo dung face fml monster poop smelly smh stink stinks stinky turd hankey shitface fail shit crap dirt dog smiling bad needs improvement|mock|creature devil face fairy fairytale fantasy mask monster scary tale red halloween creepy demon japanese oni shrek|angry creature face fairy fairytale fantasy mask mean monster tale red evil scary creepy japanese long nose tengu|boo creature excited face fairy fairytale fantasy halloween haunting monster scary silly tale spooky disappear ghoul|creature extraterrestrial face fairy fairytale fantasy monster space tale ufo paul weird outer et external|creature extraterrestrial face fairy fairytale fantasy game gamer games pixelated space tale ufo arcade play invader retro video|face monster computer machine bot|animal face mouth open smile smiling cats happy smiley|animal eye face grin smile cats happy|animal face laugh laughing lol tear cats haha happy|animal eye face love smile like affection cats valentines loving shaped|animal face ironic cats smirk smirking|animal closed eye eyes face kiss cats|animal face oh surprised cats munch scared scream fear horror screaming|animal cry face sad tear tears weep cats upset|animal face cats grumpy|embarrassed face forbidden forgot gesture hide omg prohibited scared secret smh watch animal nature haha blind covering eyes ignore mizaru not|animal ears face forbidden gesture listen not prohibited secret shh tmi nature covering deaf kikazaru|animal face forbidden gesture not oops prohibited quiet secret stealth nature omg covering hush iwazaru mouth mute speaking ignore|heart mail romance valentine email like affection envelope valentines note|143 adorbs cupid date emotion ily love romance valentine like affection valentines lovestruck|143 anniversary emotion ily kisses valentine xoxo love valentines box chocolate chocolates gift|143 emotion excited good ily kisses morning night sparkle xoxo love like affection valentines sparkly stars|143 emotion excited heartpulse ily kisses muah nervous pulse xoxo like love affection valentines pink multiple triple|143 cardio emotion heartbeat ily love pulsating pulse like affection valentines pink alarm wifi|143 adorbs anniversary emotion heart love like affection valentines two|143 anniversary date dating emotion heart ily kisses love loving xoxo like affection valentines pink small|143 emotion hearth purple white square love like|bang heavy mark punctuation decoration love above as dot ornament red|break crushed emotion heartbroken lonely sad sorry heartbreak breaking brokenhearted|burn love lust sacred passionate enthusiastic|healthier improving recovering recuperating well broken bandage wounded bandaged healing unbroken|emotion love like valentines black heavy|143 adorable cute emotion ily like love special sweet valentines|143 love like affection valentines|143 cardiac emotion ily love like affection valentines bf gold snapchat|143 emotion ily love romantic like affection valentines nct|143 emotion ily love romance like affection valentines brand neutral|143 cute cyan emotion ily like love sky special teal ice baby|143 bestest emotion ily love like affection valentines bts emoji|143 coffee|evil wicked dark|143 emotion gray ily love silver slate special monochrome|143 pure|dating emotion heart kissing lips romance sexy face love like affection valentines lipstick|100 agree clearly definitely faithful fleek full keep perfect point score true truth yup numbers century exam quiz test pass symbol|angry comic mad upset pop sign vein|bomb boom collide comic explode explosion blown bang impact red spark symbol break|comic shining shooting star stars sparkle shoot magic circle symbol animations transitions|comic drip droplet drops splashing squirt water wet work workout oops plewds symbol|cloud comic dash fart fast go gone gotta running smoke wind air shoo puff blow gust steam symbol vaping|embarrassing|bubble comic dialog message sms talk text typing words chatting chat comment literals|balloon witness info am i|balloon dialog words message talk chatting|angry balloon mad caption speech thinking zag zig|bubble cartoon cloud comic daydream decisions dream idea invent invention realize think thoughts wonder speech thinking|comic good goodnight night sleep sleeping sleepy tired dream bedtime boring sign symbol|bye cya g2g greetings gtg hello hey hi later outtie ttfn ttyl wave yo you hands gesture goodbye solong farewell palm body sign|backhand fingers body|finger raised stop palm body five|5 five high stop fingers highfive palm ban body|finger hand hands fingers spock star trek between body middle part prosper raised ring split|handshake hold reach right rightward shake palm offer|handshake hold left leftward reach shake palm offer|dismiss drop dropped pick shoo up|beckon catch come hold know lift me offer tell demand|block five halt high hold leftward pause push refuse slap stop wait highfive pressing|block five halt high hold pause push refuse rightward slap stop wait highfive pressing|awesome bet dope fleek fosho got gotcha legit okay pinch rad sure sweet three fingers limbs perfect body sign|gesture hand hold huh interrogation patience relax sarcastic ugh what zip size tiny small che finger ma purse vuoi|amount bit fingers little small sort tiny size body|peace v fingers ohyeah two air body quotes sign|cross finger hand luck good lucky body hopeful index middle|lt 3 expensive heart love money snap|fingers hand ily three body i sign|finger hand rock fingers evil eye body devil heavy metal|hang loose shaka hands gesture body phone sign|finger hand point direction fingers body white|finger hand point fingers direction body white|finger hand point fingers direction body middle white|hand fingers rude flipping bird body dito extended fu medio reversed|finger hand point fingers direction body white|finger hand point this fingers direction body secret white|finger hand poke you recruit point|1 good hand like thumb yes thumbsup awesome agree accept cool approve body ok sign|1 bad dislike good hand no nope thumb thumbsdown body bury disapprove sign|clenched hand punch solidarity fingers grasp body power pump|absolutely agree boom bro bruh bump clenched correct hand knuckle pound punch rock ttyl angry violence hit attack body brofist closed facepunch fisted sign|leftwards hand fistbump body bump|rightwards hand fistbump body bump|applause approval awesome clap congrats congratulations excited good great hand homie job nice prayed well yay praise body golf round sign|celebration gesture hand hooray praise raised yea air arms banzai body both festivus hallelujah miracle person two|lt 3 love you appreciation support|hand hug jazz swerve fingers butterfly body sign|cupped dua hands pray prayer wish gesture body facing|agreement deal hand meeting shake hands shaking|appreciate ask beg blessed bow cmon five gesture hand high please pray thanks thx hope wish namaste highfive thank you body person prayer pressed together|write lower left ballpoint pen stationery compose body|bored care cosmetics done makeup manicure whatever beauty finger fashion slay body fingers nonchalant|camera phone arm hand|arm beast bench bodybuilder bro curls flex gains gym jacked muscle press ripped strong weightlift hand summer bicep body comic feats flexing muscles strength workout|accessibility prosthetic body|accessibility prosthetic body|bent foot kick knee limb body|ankle feet kick stomp body|body ears hear hearing listen listening sound face nose|accessibility hard body|body noses nosey odor smell smells sniff smelling sniffing stinky|intelligent smart body organ|beat cardiology heartbeat organ pulse real red health|breath breathe exhalation inhalation lung organ respiration|dentist pearly teeth white body|bones dog skeleton wishbone body|body eye face googly look looking omg peep see seeing watch stalk peek eyeballs shifty wide|1 body one face look see watch stare single|body lick slurp mouth playful out taste|beauty body kiss kissing lips lipstick|anxious bite fear flirt flirting kiss lipstick nervous sexy uncomfortable worried worry pain|babies children goo infant newborn pregnant young child boy girl toddler|bright eyed grandchild kid young younger gender neutral boy girl inclusive person unspecified|bright eyed child grandson kid son young younger man male guy teenager|bright eyed child daughter granddaughter kid virgo young younger zodiac female woman teenager maiden virgin|adult gender neutral female inclusive male man men unspecified woman women|haired human hairstyle blonde man|adult bro mustache father dad guy classy sir moustache male men|bearded whiskers man bewhiskered|bearded whiskers facial hair bewhiskered male men|bearded whiskers facial hair bewhiskered female women|adult lady female girls women yellow|haired blonde female girl person women|haired male boy blonde guy person men|adult elderly grandparent old wise human elder senior gender neutral female male man men unspecified woman women|adult bald elderly gramps grandfather grandpa wise human male men elder senior older|adult elderly grandma grandmother granny lady wise human female women elder senior nanna older|annoyed disappointed disgruntled disturbed frown frustrated gesture irritated upset worried sad woman|annoyed disappointed disgruntled disturbed frown frustrated gesture irritated upset male boy sad depressed discouraged unhappy men|annoyed disappointed disgruntled disturbed frown frustrated gesture irritated upset female girl sad depressed discouraged unhappy women|disappointed downtrodden frown grimace scowl sulk upset whine blank face fed gesture look up|disappointed downtrodden frown grimace scowl sulk upset whine male boy gesture men|disappointed downtrodden frown grimace scowl sulk upset whine female girl gesture women|forbidden gesture hand not prohibit decline arms deal denied face good halt ok prohibited stop x|forbidden gesture hand not prohibit male boy nope denied good halt men ng ok prohibited stop|forbidden gesture hand not prohibit female girl nope denied good halt ng ok prohibited stop women|exercise gesture hand omg agree ballerina face hands head|exercise gesture hand omg men boy male blue human|exercise gesture hand omg women girl female pink human|fetch flick flip gossip sarcasm sarcastic sassy seriously whatever information attendant bellhop concierge desk female girl hair help woman women|fetch flick flip gossip sarcasm sarcastic sassy seriously whatever male boy human information desk help men|fetch flick flip gossip sarcasm sarcastic sassy seriously whatever female girl human information desk help women|gesture here know me pick question raise answering happy one raised up|gesture here know me pick question raise male boy happy men one raised|gesture here know me pick question raise female girl happy one raised women|accessibility ear gesture hear|accessibility ear gesture hear male men|accessibility ear gesture hear female women|apology ask beg bow favor forgive gesture meditate meditation pity regret sorry respectiful boy cute deeply dogeza man massage respect thanks|apology ask beg bow favor forgive gesture meditate meditation pity regret sorry male boy deeply men respect thanks|apology ask beg bow favor forgive gesture meditate meditation pity regret sorry female girl deeply respect thanks women|again bewilder disbelief exasperation facepalm no not oh omg shock smh disappointed face head hitting palm picard|again bewilder disbelief exasperation facepalm no not oh omg shock smh male boy face men palm|again bewilder disbelief exasperation facepalm no not oh omg shock smh female girl face palm women|doubt dunno guess idk ignorance indifference knows maybe shrug whatever who regardless shruggie|doubt dunno guess idk ignorance indifference knows maybe shrug whatever who male boy confused indifferent men|doubt dunno guess idk ignorance indifference knows maybe shrug whatever who female girl confused indifferent women|doctor healthcare nurse therapist hospital dentist md physician professional|doctor healthcare nurse therapist human dentist male md men physician professional|doctor healthcare nurse therapist human dentist female md physician professional women|graduate learn education pupil school|graduate human education graduation male men pupil school|graduate human education female graduation pupil school women|instructor lecturer professor education educator|instructor lecturer professor human education educator male men school|instructor lecturer professor human education educator female school women|justice law scales court|justice law scales court human male men|justice law scales court human female women|gardener rancher crops farm farming worker|gardener rancher human farm farming male men worker|gardener rancher human farm farming female women worker|chef food kitchen culinary cooking service|chef human cooking food male men service|chef human cooking female food service women|electrician plumber tradesperson worker technician person repair|electrician plumber tradesperson human wrench male men person repair|electrician plumber tradesperson human wrench female person repair women|assembly industrial labor welder|assembly industrial human male men welder|assembly industrial human female welder women|architect business manager white collar accountant adviser analyst banker clerk|architect business manager white collar human accountant adviser analyst banker businessman ceo clerk male men|architect business manager white collar human accountant adviser analyst banker businesswoman ceo clerk female women|biologist chemist engineer mathematician physicist chemistry lab technician|biologist chemist engineer mathematician physicist human lab male men research technician|biologist chemist engineer mathematician physicist human female lab research technician women|coder computer developer inventor software engineer laptop technology|coder computer developer inventor software engineer programmer human laptop blogger male men technology|coder computer developer inventor software engineer programmer human laptop blogger female technology women|actor entertainer rock rockstar star song artist performer music musician rocker|actor entertainer rock rockstar star human aladdin bowie male men music musician rocker sane|actor entertainer rock rockstar star human female music musician rocker women|palette painting draw creativity art paint painter|palette painter human art male men paint|palette painter human art female paint women|plane fly airplane aviation aviator|plane aviator human airplane aviation male men|plane aviator human airplane aviation female women|rocket space outerspace moon planets stars|rocket space human cosmonaut male men moon planets stars|rocket space human cosmonaut female moon planets stars women|fire firetruck|fire firetruck fireman human male men|fire firetruck fireman human female women|apprehend arrest citation cop law over pulled undercover policeman policewoman|apprehend arrest citation cop law over pulled undercover legal enforcement 911 male men policeman|apprehend arrest citation cop law over pulled undercover legal enforcement 911 female policewoman women|sleuth spy human eye private|sleuth spy crime male men|sleuth spy human female women|buckingham helmet london palace protect british guardsman|buckingham helmet london palace uk gb british male guy royal guardsman men|buckingham helmet london palace uk gb british female royal guardsman guardswoman women|assassin fight fighter hidden person secret skills sly soldier stealth war ninjutsu japanese|build fix hardhat hat man person rebuild remodel repair work labor builder face hard helmet safety add ci update|build fix hardhat hat rebuild remodel repair work male human wip guy labor helmet men|build fix hardhat hat man rebuild remodel repair work female human wip labor helmet women|monarch noble regal royal royalty power|crown fairy fairytale fantasy king royal royalty tale boy man male men|crown fairy fairytale fantasy queen royal royalty tale girl woman female blond blonde tiara women|headdress arab man muslim sikh|male indian hinduism arabs men|female indian hinduism arabs women|cap chinese gua guapi hat mao pi man male boy asian|bandana head hijab kerchief mantilla tichel female|formal wedding man couple marriage groom male men suit|formal groom wedding fashion male men person suit|formal wedding fashion female women|wedding bride couple marriage woman|wedding marriage bride male men|bride wedding marriage female women|baby female pregnancy lady women|belly bloated full overeat baby|belly bloated full overeat stuffed baby|baby mom mother nursing woman breastfeeding child female infant milk women|feed mom mother nanny newborn nursing birth food bottle child female infant milk women|dad father feed nanny newborn nursing birth food bottle child infant male men milk|feed nanny newborn nursing parent birth food bottle child infant milk|church face fairy fairytale fantasy tale heaven wings halo cherub cupid putto|celebration christmas fairy fantasy father holiday merry tale xmas festival man male activity men nicholas saint sinterklaas|celebration christmas fairy fantasy holiday merry mother santa tale xmas woman female activity women|celebration christmas fairy fantasy holiday merry santa tale xmas activity|good hero superpower marvel fantasy heroine superpowers|good hero superpower male superpowers fantasy men|good hero heroine superpower female superpowers fantasy women|bad criminal evil superpower villain marvel fantasy superpowers|bad criminal evil superpower villain male hero superpowers fantasy men|bad criminal evil superpower villain female heroine superpowers fantasy women|fantasy magic play sorcerer sorceress sorcery spell summon witch wizard|fantasy magic play sorcerer sorceress sorcery spell summon witch wizard male men|fantasy magic play sorcerer sorceress sorcery spell summon witch wizard female women|fairytale fantasy myth person pixie tale wings magical oberon puck titania|fairytale fantasy myth oberon person pixie puck tale wings male men|fairytale fantasy myth person pixie tale titania wings female women|blood dracula fangs halloween scary supernatural teeth undead twilight fantasy|blood fangs halloween scary supernatural teeth undead male dracula fantasy men|blood fangs halloween scary supernatural teeth undead female fantasy unded women|creature fairytale folklore ocean sea siren trident fantasy merboy mergirl mermaid merman merwoman|creature fairytale folklore neptune ocean poseidon sea siren trident triton man male fantasy men mermaid|creature fairytale folklore merwoman ocean sea siren trident woman female ariel fantasy women|elves enchantment fantasy folklore magic magical myth ears legolas pointed|elves enchantment fantasy folklore magic magical myth male ears men pointed|elves enchantment fantasy folklore magic magical myth female ears pointed women|djinn fantasy jinn lamp myth rub wishes magical djinni jinni|djinn fantasy jinn lamp myth rub wishes male men|djinn fantasy jinn lamp myth rub wishes female women|apocalypse dead halloween horror scary undead walking fantasy|apocalypse dead halloween horror scary undead walking male dracula fantasy men|apocalypse dead halloween horror scary undead walking female fantasy women|fairy fantasy monster tale trolling mystical shrek|face headache relax relaxing salon soothe spa tension therapy treatment head massaging|face headache relax relaxing salon soothe spa tension therapy treatment male boy head men|face headache relax relaxing salon soothe spa tension therapy treatment female girl head women|barber beauty chop cosmetology cut groom hair parlor shears style hairstyle cutting hairdresser|barber beauty chop cosmetology cut groom hair parlor person shears style male boy men|barber beauty chop cosmetology cut groom hair parlor person shears style female girl women|amble gait hike man pace pedestrian stride stroll walk move walker|amble gait hike pace pedestrian stride stroll walk human feet steps male men|amble gait hike man pace pedestrian stride stroll walk human feet steps female women|amble gait hike man pace pedestrian stride stroll walk peerson exercise|amble gait hike man pace pedestrian stride stroll walk person exercise|amble gait hike pace pedestrian stride stroll walk person exercise|stand still|stand still male men|stand still female women|kneel knees pray respectful|kneel knees pray respectful male men|kneel knees respectful pray female women|kneel knees pray|kneel knees pray worship|kneel knees pray worship|accessibility blind probing|accessibility blind probing walk visually impaired|accessibility blind probing male men|accessibility blind probing visually impaired walk stick|accessibility blind probing female women|accessibility blind probing stick visually impaired|accessibility disability|accessibility disability|accessibility disability male men|accessibility disability mobility|accessibility disability female women|accessibility mobility disability|accessibility disability|accessibility mobility disability|accessibility disability male men|accessibility mobility disability|accessibility disability female women|accessibility disability mobility|fast hurry marathon move quick race racing run rush speed exercise jogging runner workout|fast hurry marathon move quick race racing run rush speed walking exercise male men runner workout|fast hurry marathon move quick race racing run rush speed walking exercise female boy runner women workout|fast hurry marathon move quick race racing run rush speed exercise jog|fast hurry marathon move quick race racing run rush speed exercise jog|fast hurry marathon move quick race racing run rush speed jog exercise|dance dancer elegant festive flair flamenco groove let s salsa tango female girl fun dress red women|dance dancer elegant festive flair flamenco groove let s salsa tango male boy fun disco men|business man levitate hover jump boy hovering jabsco male men rude walt|bestie bff counterpart dancer double ear identical pair party partying soulmate twin twinsies perform costume dancing wearing women|bestie bff counterpart dancer double ear identical pair party partying people soulmate twin twinsies male boys dancing man wearing|bestie bff counterpart dancer double ear identical pair party partying people soulmate twin twinsies female girls dancing wearing|day luxurious pamper relax sauna spa steam steambath unwind hamam|day luxurious pamper relax sauna spa steam steambath unwind male steamroom hamam men|day luxurious pamper relax sauna spa steam steambath unwind female steamroom hamam women|climb climber mountain rock scale up sport bouldering|climb climber mountain rock scale up sports hobby male bouldering men|climb climber mountain rock scale up sports hobby female bouldering women|fencer sword sports|jockey racehorse riding sport animal betting competition gambling luck race|ski snow sports winter|ski snow snowboard sport sports winter snowboarding|ball birdie caddy driving golf green pga putt range tee sports business club golfer|ball birdie caddy driving golf green pga putt range tee sport golfer male men|ball birdie caddy driving golf green pga putt range tee sports business female golfer women|beach ocean sport surf surfer swell waves sea|beach ocean sport surf surfer swell waves sports sea summer male men|beach ocean person sport surf surfer swell waves sports sea summer female women|canoe cruise fishing lake oar paddle raft river row rowboat sport move paddles vehicle|canoe cruise fishing lake oar paddle raft river row rowboat sports hobby water ship male men vehicle|canoe cruise fishing lake oar paddle raft river row rowboat sports hobby water ship female vehicle women|freestyle sport swim swimmer triathlon pool|freestyle sport swim swimmer triathlon sports exercise human athlete water summer male men|freestyle man sport swim swimmer triathlon sports exercise human athlete water summer female women|athletic basketball championship dribble net player throw sports human|athletic basketball championship dribble net player throw sport male men|athletic basketball championship dribble net player throw sports human female women|barbell bodybuilder deadlift lifter powerlifting weight weightlifter workout sports training exercise gym|barbell bodybuilder deadlift lifter powerlifting weight weightlifter workout sport gym male men|barbell bodybuilder deadlift lifter powerlifting weight weightlifter workout sports training exercise female gym women|bicycle bicyclist bike cycle cyclist riding sport move|bicycle bicyclist bike cycle cyclist riding sport sports exercise hipster male men|bicycle bicyclist bike cycle cyclist riding sport sports exercise hipster female women|bicycle bicyclist bike cycle cyclist riding sport move biker|bicycle bicyclist bike cycle cyclist riding sport transportation sports human race biker male men|bicycle bicyclist bike cycle cyclist riding sport transportation sports human race female biker women|active cartwheel excited flip gymnastics happy somersault sport gymnastic doing gymnast|active cartwheel excited flip gymnastics happy somersault doing male men|active cartwheel excited flip gymnastics happy somersault doing female women|combat duel grapple ring tournament wrestle sport wrestler wrestlers|combat duel grapple ring tournament wrestle sports wrestlers male man wrestler|combat duel grapple ring tournament wrestle sports wrestlers female woman wrestler|sport swimming waterpolo|sport swimming waterpolo sports pool male men|sport swimming waterpolo sports pool female women|athletics ball catch chuck hurl lob pitch sport throw toss|athletics ball catch chuck hurl lob pitch sport throw toss sports male men|athletics ball catch chuck hurl lob pitch sport throw toss sports female women|act balance balancing handle juggle manage multitask skill performance juggler|act balance balancing handle juggle manage multitask skill juggler male men|act balance balancing handle juggle manage multitask skill female juggler women|cross legged legs meditation peace relax serenity yoga yogi zen meditate|cross legged legs meditation peace relax serenity yoga yogi zen male mindfulness men|cross legged legs meditation peace relax serenity yoga yogi zen female mindfulness women|bathtub tub clean shower bathroom bathing hot|bedtime good goodnight hotel nap night sleep tired zzz rest accommodation sleeping|bae bestie bff couple dating flirt friends hand hold twins friendship date gender inclusive neutral nonconforming|bae bestie bff couple dating flirt friends girls hand hold sisters twins pair friendship love like female people human date lesbian lgbt pride two woman|bae bestie bff couple dating flirt friends hand hold twins pair people human love date like affection valentines marriage female heterosexual male men straight women|bae bestie bff boys brothers couple dating flirt friends hand hold twins pair love like bromance friendship people human date gay lgbt male man pride two|anniversary babe bae couple date dating heart love mwah person romance together xoxo pair valentines like marriage couplekiss female gender kissing male man men neutral woman women|anniversary babe bae couple date dating heart love mwah person romance together xoxo couplekiss female kissing male men women|anniversary babe bae couple date dating heart love mwah person romance together xoxo pair valentines like marriage couplekiss gay kissing lgbt male men pride two|anniversary babe bae couple date dating heart love mwah person romance together xoxo pair valentines like marriage couplekiss female kissing lesbian lgbt pride two women|anniversary babe bae dating kiss love person relationship romance together you pair like affection human valentines marriage female gender loving male man men neutral woman women|anniversary babe bae dating kiss love person relationship romance together you female male men women|anniversary babe bae dating kiss love person relationship romance together you pair like affection human valentines marriage gay lgbt male men pride two|anniversary babe bae dating kiss love person relationship romance together you pair like affection human valentines marriage female lesbian lgbt pride two women|child love father mother son|child home parents people human daughter father female male men mother women|child home parents people human children daughter father female male men mother son women|child home parents people human children father female male men mother sons two women|child home parents people human children daughters father female male men mother two women|child home parents people human children father fathers gay lgbt male men pride son two|child home parents people human children daughter father fathers gay lgbt male men pride two|child home parents people human children daughter father fathers gay lgbt male men pride son two|child home parents people human children father fathers gay lgbt male men pride sons two|child home parents people human children daughters father fathers gay lgbt male men pride two|child home parents people human children female lesbian lgbt mother mothers pride son two women|child home parents people human children daughter female lesbian lgbt mother mothers pride two women|child home parents people human children daughter female lesbian lgbt mother mothers pride son two women|child home parents people human children female lesbian lgbt mother mothers pride sons two women|child home parents people human children daughters female lesbian lgbt mother mothers pride two women|child home parent people human father male men son|child home parent people human children father male men sons two|child home parent people human daughter father female male|child home parent people human children daughter father male men son|child home parent people human children daughters father female male two|child home parent people human female mother son women|child home parent people human children female mother sons two women|child home parent people human daughter female mother women|child home parent people human children daughter female male mother son|child home parent people human children daughters female mother two women|face silhouette speak user person human sing say talk mansplaining shout shouting|mysterious shadow user person human|bff bust everyone friend friends people user person human group team shadows silhouettes two users contributors|comfort embrace farewell friendship goodbye hello hug love thanks care|child home parents mom dad father mother people human boy female male man men woman women|kid parents|children parents|parent kid|parent children|barefoot clothing footprint omw print walk feet tracking walking beach body footsteps tracks|animal banana nature circus head|animal banana nature circus cheeky|animal nature circus|animal ape monkey|adorbs animal pet puppies puppy friend nature woof faithful|animal animals dogs pet nature friend doge faithful dog2 doggo|accessibility animal blind eye seeing|accessibility animal assistance blind|animal dog fluffy 101 nature pet miniature standard toy|animal face nature wild|animal face nature|animal curious sly nature face|animal kitten kitty pet meow nature|animal animals cats kitten pet meow cat2 domestic feline housecat|animal feline halloween meow unlucky superstition luck pet|alpha animal face leo mane order rawr roar safari strong zodiac nature|animal big cat predator danger wild nature roar cute|animal big cat predator zoo nature roar bengal tiger2|animal big cat predator zoo nature african jaguar|animal dressage equine farm horses brown nature head|alces animal antlers elk mammal canada sweden sven cool|animal ass burro hinny mammal mule stubborn eeyore|animal equestrian farm racehorse racing gamble luck galloping speed|face animal nature mystical|animal stripe nature stripes safari face|animal nature horns venison buck reindeer stag|animal buffalo herd wisent ox|animal farm milk moo beef ox nature happy|animal animals bull farm taurus zodiac cow beef bullock oxen steer|animal zoo nature ox cow domestic|animal animals farm milk moo beef ox nature cow2 dairy|animal bacon farm pork oink nature head|animal bacon farm pork sow nature hog pig2|animal pig nature warthog wild|animal face farm smell snout oink|animal aries horns male sheep zodiac zoo nature|animal baa farm female fluffy lamb sheep wool nature shipit|animal capricorn farm milk zodiac nature|animal desert dromedary hump one hot arabian bump|animal bactrian desert nature hot asian bump|alpaca animal guanaco vicuna wool nature|animal spots nature safari face|animal nature nose th circus|animal extinction large tusk wooly elephant tusks extinct woolly|animal nature horn rhino|animal hippo nature|animal nature cheese wedge rodent|animal animals nature rodent dormouse mice mouse2|animal mouse rodent|animal face pet nature|animal bunny pet nature spring magic easter|animal bunny pet nature magic spring rabbit2|animal squirrel nature rodent|animal dam teeth rodent|animal spiny nature face|animal vampire nature blind batman|animal face grizzly growl honey nature wild teddy|animal arctic white face|animal australia bear down face marsupial under nature|animal bamboo face nature|lazy slow animal|animal fishing playful|animal stink smelly|animal joey jump marsupial nature australia hop roo|animal honey pester nature|feet paws print animal tracking footprints dog cat pet kitten puppy|bird gobble thanksgiving animal wild|animal bird ornithology cluck nature hen|animal bird ornithology nature chicken cock cockerel|animal baby bird egg chicken born|animal bird ornithology chicken yellow|animal bird newborn ornithology chicken hatched standing|animal ornithology nature fly tweet spring|animal antarctica bird ornithology nature|bird fly ornithology peace animal|animal bird ornithology nature bald|animal bird ornithology nature mallard|animal bird cygnet duckling ornithology ugly nature|animal bird ornithology wise nature hoot|animal bird extinction large ornithology extinct mauritius obsolete|bird flight light plumage fly|animal bird flamboyant ornithology tropical|animal bird colorful ornithology ostentatious peahen pretty proud nature|animal bird ornithology pirate talk nature|angelic ascend aviation bird fly flying heavenly mythology soar angel birds|animal beak caw corvid crow ornithology raven rook|animal bird duck flock fowl gaggle gander geese honk ornithology silly jemima goosebumps|ascend ascension emerge fantasy firebird glory immortal rebirth reincarnation reinvent renewal revival revive rise transform bird mythtical reborn|animal face nature croak toad|animal zoo nature reptile lizard alligator croc|animal terrapin tortoise slow nature|animal reptile nature gecko|animal bearer ophiuchus serpent zodiac evil nature hiss python|animal fairy fairytale tale myth nature chinese green head|animal fairy fairytale knights tale myth nature chinese green|brachiosaurus brontosaurus dinosaur diplodocus animal nature extinct|dinosaur tyrannosaurus animal nature extinct trex|animal beach face ocean nature sea cute|animal beach ocean nature sea whale2|animal beach flipper ocean nature fish sea fins|animal lion ocean sea creature|animal dinner fishes fishing pisces zodiac food nature freshwater|animal fishes swim ocean beach nemo blue yellow|animal fish nature food sea ocean fugu pufferfish|animal fish nature sea ocean jaws fins beach great white|animal creature ocean sea nature beach|animal beach conch sea nature seashell|change climate ocean reef sea|animal aquarium burn invertebrate jelly life marine ocean ouch plankton sea sting stinger tentacles|animal escargot garden nature slug slow shell|insect pretty animal nature caterpillar|animal garden insect nature worm caterpillar|animal garden insect nature bug|animal bee bumblebee honey insect nature spring bug|animal bug insect|animal garden insect ladybird ladybug nature bug|animal bug grasshopper insect orthoptera chirp|animal insect pest roach pests|animal insect arachnid|animal insect arachnid silk cobweb spiderweb|scorpio scorpius zodiac animal arachnid|bite disease fever insect malaria pest virus animal nature|animal disease insect maggot pest rotting|animal annelid earthworm parasite|amoeba bacteria science virus germs covid cell coronavirus germ microorganism|anniversary birthday date flower love plant romance flowers nature spring|flower plant spring springtime nature pink sakura|japanese spring blossom cherry doily done paper stamp well|beauty buddhism calm flower hinduism peace purity serenity meditation india vietnam|plant flower decoration military|beauty elegant flower love plant red valentine flowers valentines spring|dying plant nature rose dead drooping|flower plant vegetable flowers beach|flower outdoors plant sun nature fall yellow|buttercup dandelion flower plant nature flowers yellow blossoming daisy|blossom flower growth plant flowers nature summer spring|bloom bluebonnet flower indigo lavender lilac lupine plant purple shrub snapdragon spring violet|plant sapling sprout young nature grass lawn spring sprouting seed|decor grow house nurturing pot greenery boring houseplant useless|christmas forest pine plant nature fir wood|forest green habitat shedding plant nature rounded wood|beach plant tropical vegetable nature summer mojito coconut|desert drought nature plant vegetable|ear grain grains plant nature crop farming wheat|leaf plant vegetable medicine weed grass lawn crop|irish plant vegetable nature clover trefoil|4 irish lucky plant vegetable nature ireland luck|falling nature plant vegetable ca fall canada canadian|autumn fall falling nature plant vegetable leaves brown|blow flutter nature plant tree vegetable grass lawn spring green leaves|branch home nesting bird|bird branch egg nesting|fungus toadstool plant vegetable shroom|dionysus fruit grape food wine plant|cantaloupe fruit nature food honeydew muskmelon plant|fruit food picnic summer plant|c citrus fruit nectarine orange vitamin food nature mandarin plant|citrus fruit sour nature lemonade plant|acidity citrus cocktail fruit garnish key margarita mojito refreshing salsa sour tangy tequila tropical zest acidic citric|fruit potassium food monkey plant plantain|colada fruit pina tropical nature food plant|food fruit tropical|diet food fruit health ripe mac school delicious plant|fruit nature delicious golden granny plant smith|fruit nature food plant|fruit nature food bottom butt plant|berries cherry fruit red food plant wild|berry fruit food nature plant|berries berry bilberry blue blueberry food fruit|food chinese gooseberry kiwifruit|food fruit vegetable nature plant|food fruit olives|colada palm pina fruit nature food cocoanut|food fruit|aubergine vegetable nature food phallic plant purple|food vegetable tuber vegatable starch baked idaho|food vegetable orange|crops farm maize maze food vegetable plant cob|food spicy chilli chili plant|capsicum food vegetable fruit plant|food pickle vegetable fruit gherkin|bok burgers cabbage choy kale lettuce salad food vegetable plant chinese cos greens romaine|cabbage wild fruit food vegetable|flavoring food spice cook plant vegetable|flavoring cook food spice plant vegetable|food nut peanut vegetable nuts|food kidney legume small|almond plant food squirrel acorn nut|beer health herb natural spice yellow cooking gingerbread|beans beanstalk edamame legume soybean vegetable veggie cozy green|food fungi fungus nature pizza portobello shiitake shroom spore sprout toppings truffle vegetable vegetarian veggie toadstool|carbs food grain loaf restaurant toast wheat breakfast|bread breakfast crescent food french roll|food french france bakery|arepa bread food gordita lavash naan pita flour bakery flat|convoluted twisted food bread germany bakery soft twist|bakery bread breakfast schmear food jewish cheese cream|breakfast crepe food hotcake pancake flapjacks hotcakes brunch crepes|breakfast indecisive iron food brunch|food chadder swiss|good food drumstick barbecue bbq manga|bone chicken drumstick hungry turkey food meat bird|chop lambchop porkchop red steak food cow|breakfast food meat pork pig brunch rashers|burger eat fast food hungry meat beef cheeseburger mcdonalds king|fast food chips snack potato mcdonald s|cheese food hungry pepperoni slice party italy|frankfurter hotdog sausage food america redhot wiener|bread food lunch toast bakery cheese deli meat vegetables|mexican food|mexican wrap food|food mexican pamonha wrapped masa tamal|falafel food gyro kebab mediterranean doner pita sandwich shawarma|chickpea meatball food mediterranean falfel|breakfast food chicken easter|breakfast easy egg fry frying over pan restaurant side sunny up food kitchen skillet fried|casserole paella cooking skillet curry|soup stew meat hot bowl|cheese chocolate food melted pot ski swiss|breakfast cereal congee oatmeal porridge food tableware|food healthy lettuce vegetable|corn movie pop food theater films snack drama popping|dairy food cook|condiment flavor mad salty shaker taste upset|can soup tomatoes preserve tin tinned|food japanese lunch assets|food japanese snack senbei|food japanese onigiri omusubi|food asian boiled bowl steamed|food spicy hot indian|chopsticks food noodle pho ramen soup japanese noodles|food meatballs pasta restaurant italian noodle|food nature plant goguma yam|food kebab restaurant seafood skewer stick japanese|food fish japanese rice sashimi seafood|prawn tempura food animal appetizer summer|food pastry restaurant japan sea beach narutomaki pink kamaboko surimi ramen design fishcake|autumn festival yuebing food dessert mooncake|dessert japanese skewer stick sweet food barbecue meat balls green pink white|empanada gyoza jiaozi pierogi potsticker food|prophecy food dessert|chopsticks delivery food oyster pail leftovers chinese container out take|cancer zodiac animal crustacean|animal bisque claws seafood nature|food shellfish small animal ocean nature seafood prawn|animal food mollusk nature ocean sea molusc|diving pearl food|dessert food icecream restaurant serve sweet hot summer mr whippy|dessert restaurant sweet hot summer cone snow|dessert food restaurant sweet hot bowl|breakfast dessert donut food sweet snack|chip chocolate dessert sweet food snack oreo biscuit|bday celebration dessert happy pastry sweet food candles party|cake dessert pastry slice sweet food piece strawberry|bakery dessert sprinkles sugar sweet treat food cake fairy pastry|apple filling fruit meat pastry pumpkin slice food dessert sweet|candy dessert halloween sweet tooth food snack|cavities dessert halloween restaurant sweet tooth wrapper snack lolly|candy dessert food restaurant sweet snack lollypop sucker|dessert pudding sweet food flan caramel creme|barrel bear food honeypot jar sweet bees kitchen|babies birth born drink infant milk newborn food container feeding|drink beverage cow|cafe caffeine chai coffee drink morning steaming tea latte espresso mug chocolate|brew drink food pot tea hot kettle|beverage cup drink oolong tea bowl breakfast green british matcha|bar beverage bottle cup drink restaurant wine drunk japanese alcohol booze rice|bar drink wine celebration bubbly champagne party sparkling|alcohol bar beverage booze club drink drinking drinks restaurant drunk red|alcohol bar booze club drink drinking drinks mad martini men drunk beverage mojito|alcohol bar booze club cocktail drinking drinks drunk mai party tai tropics beverage summer beach mojito fruit punch tiki vacation|alcohol ale bar booze drink drinking drinks octoberfest oktoberfest pint stein summer relax beverage drunk party pub|alcohol bar booze bottoms cheers clink drinking drinks relax beverage drink drunk party pub summer beers mug|celebrate clink drink glass beverage party alcohol cheers wine champagne toast celebration|liquor scotch shot whiskey whisky drink beverage drunk alcohol booze bourbon rum|accident drink empty glass oops pour spill water cup|drink juice malt soda soft water go milkshake pop smoothie tableware|boba food milk pearl taiwan straw momi tapioca|juice straw sweet drink|drink tea beverage bombilla chimarrao cimarron yerba|cold cube iceberg water|hashi jeotgarak kuaizi food|cooking dinner eat food meal lunch restaurant cutlery dining tableware|breakfast breaky cooking cutlery delicious dinner eat feed food hungry lunch restaurant yum yummy kitchen silverware tableware|eat tableware cutlery kitchen|chef cooking hocho tool weapon blade cutlery butchers chop cut|condiment container empty nothing sauce store|aquarius cooking drink jug tool weapon zodiac vase jar|earth world international planet|earth world usa international planet|earth world east international planet|earth internet web world worldwide international interweb i18n global wide www localization|location direction travel|nation country japanese asia silhouette|direction magnetic navigation orienteering|cold photo nature environment winter|photo nature environment|eruption mountain nature photo disaster weather|mountain nature photo japanese capped san snow|photo outdoors tent campsite|weather summer sunny sand mojito|photo warm saharah|photo tropical mojito|photo environment nature|photo place sports concert venue grandstand sport|art culture history|crane wip working progress architectural|bricks clay mortar wall construction infrastructure|boulder heavy solid stone tough construction|log lumber timber nature trunk construction|home house roundhouse shelter yurt structure|house buildings photo building group|home abandon evict broken building abandoned haunted old|building country heart home ranch settle simple suburban suburbia where|building country heart home ranch settle simple suburban suburbia where plant nature tree|city cubical job bureau work high rise|building envelope communication japan mark postal|building european email|building doctor medicine health surgery cross emergency medical red room|building money sales cash business enterprise bakkureru bk branch|building accomodation checkin accommodation h|building like affection dating heart hospital|24 building hours shopping groceries corner e eleven hour kwik mart shop|building student education learn teach clock elementary high middle tower|building shopping mall center shops|building industry pollution smoke industrial smog|building photo fortress|building european royalty history turrets|chapel hitched nuptials romance love like affection couple marriage bride groom activity church heart|photo japanese eiffel red|new ny nyc york american newyork|bless chapel christian cross religion building christ|islam masjid muslim religion worship minaret domed roof|religion|jew jewish judaism religion temple worship synagog|religion temple japan kyoto kami michi no|hajj islam muslim religion umrah mecca mosque|photo summer water fresh feature park|camping photo outdoors|fog photo mountain bridge city karl under weather|star evening city downtown starry weather|city photo night life urban building skyline|morning sun view vacation photo mountain weather|morning nature sun view vacation photo sunset weather|building city evening landscape sun sunset photo sky buildings orange weather|building dusk sun photo good morning dawn buildings city over sunrise weather|photo sanfrancisco gate golden weather|hotsprings steaming bath warm relax onsen steam|entertainment photo carnival activity fairground go merry round|amusement park play playing sliding theme fun|amusement park theme photo carnival londoneye activity big entertainment fairground observation|amusement park theme carnival playground photo fun activity entertainment rollercoaster|cut fresh haircut shave hair salon style s hairdresser shop stripes|festival carnival party activity big entertainment top|caboose engine railway steam train trains travel transportation vehicle|electric train tram travel trolleybus transportation vehicle carriage railcar railroad wagon|railway shinkansen transportation vehicle bullettrain side|high speed nose railway shinkansen travel transportation vehicle fast public bullettrain front|arrived choo railway transportation vehicle diesel electric passenger regular train2|subway travel transportation blue square mrt underground tube train vehicle|arrived monorail railway transportation vehicle|railway train transportation vehicle public platform|trolleybus transportation vehicle|vehicle transportation|car trip transportation vehicle funicular train|bus trolley trolleybus transportation vehicle carriage public travel train|school vehicle car transportation|cars vehicle transportation front|bus tram trolley bart transportation vehicle electric|bus drive van vehicle car transportation minivan mover people|emergency vehicle health 911 hospital|truck transportation cars vehicle department|5 0 cops patrol vehicle cars transportation law legal enforcement cop side|vehicle law legal enforcement 911 front cop|cab cabbie car drive vehicle yellow uber cars transportation new side taxicab york|cab cabbie cars drove hail yellow vehicle uber front taxicab|car driving vehicle red transportation side|car cars drove vehicle transportation front|car drive recreational sportutility transportation blue campervan motorhome rv|automobile car flatbed pick up transportation vehicle|car drive vehicle cars transportation resources|car drive move semi truck vehicle cars transportation express green|vehicle car farming agriculture farm|zoom sports race fast formula f1 one|racing race sports fast motorbike|vehicle vespa sasha bike cycle|accessibility|accessibility|tuk move transportation|bike class cycle cycling cyclist gang ride spin spinning sports exercise hipster push vehicle|vehicle razor|board skate skater wheels|blades skates sport footwear sports derby inline|busstop transportation wait|highway road cupertino interstate|train transportation|barrell|diesel fuelpump gas gasoline station petroleum petrol|car circle tire turn vehicle transport|alarm alert beacon emergency revolving siren ambulance 911 error pinged law legal cars s flashing rotating vehicle warning|intersection signal stop stoplight transportation|drove intersection signal stop stoplight transportation driving semaphore|octagonal|barrier wip progress caution warning black roadwork sign striped yellow work|ship tool ferry sea boat admiralty fisherman pattern|float life lifesaver preserver rescue safety save saver swim|boat resort sailing sea yacht ship summer transportation water dinghy vehicle|boat paddle water ship|billionaire boat lake luxury millionaire summer travel ship transportation vehicle motorboat powerboat|yacht cruise ferry vehicle|boat passenger ship yacht|motorboat ship vehicle|boat passenger travel transportation titanic deploy cruise vehicle|aeroplane fly flying jet plane travel vehicle transportation flight|aeroplane plane flight transportation fly vehicle|aeroplane check departures plane airport flight landing off taking vehicle|aeroplane arrivals arriving landing plane airport flight boarding vehicle|hang glide parasail skydive fly|chair sit airplane transport bus flight fly aeroplane train|copter roflcopter travel vehicle transportation fly|vehicle transportation|cable gondola lift ski transportation vehicle|cable car gondola ropeway transportation vehicle ski|space communication gps orbit spaceflight nasa iss artificial vehicle|launch rockets space travel ship staffmode nasa outer fly shuttle vehicle deploy|aliens extra terrestrial ufo transportation vehicle alien extraterrestrial fantasy space|hotel service|bag packing roller suitcase travel|sand time timer clock oldschool limit exam quiz test|flowing hours sand timer waiting yolo oldschool time countdown|clock time accessories apple timepiece wrist wristwatch|hours hrs late time waiting wake morning|clock time deadline|alarm|time|12 00 time 0000 1200 noon midnight midday late early schedule clock12 face oclock|12 30 clock time 00 0030 1230 late early schedule clock1230 face|1 00 time 100 13 1300 late early schedule clock1 face oclock|1 30 clock time 130 13 1330 late early schedule clock130 face|2 00 time 200 14 1400 late early schedule clock2 face oclock|2 30 clock time 230 14 1430 late early schedule clock230 face|3 00 time 300 15 1500 late early schedule clock3 face oclock|3 30 clock time 330 15 1530 late early schedule clock330 face|4 00 time 400 16 1600 late early schedule clock4 face oclock|30 4 clock time 430 16 1630 late early schedule clock430 face|5 00 time 500 17 1700 late early schedule clock5 face oclock|30 5 clock time 530 17 1730 late early schedule clock530 face|6 00 time 600 18 1800 late early schedule dawn dusk clock6 face oclock|30 6 clock 630 18 1830 time late early schedule clock630 face|0 7 00 700 19 1900 time late early schedule clock7 face oclock|30 7 clock 730 19 1930 time late early schedule clock730 face|8 00 time 800 20 2000 late early schedule clock8 face oclock|30 8 clock time 830 20 2030 late early schedule clock830 face|9 00 time 900 21 2100 late early schedule clock9 face oclock|30 9 clock time 930 21 2130 late early schedule clock930 face|0 10 00 1000 22 2200 time late early schedule clock10 face oclock|10 30 clock time 1030 22 2230 late early schedule clock1030 face|11 00 time 1100 23 2300 late early schedule clock11 face oclock|11 30 clock time 1130 23 2330 late early schedule clock1130 face|dark space nature twilight planet night evening sleep eclipse shadow solar symbol weather|dreams space nature twilight planet night evening sleep symbol weather|space nature twilight planet night evening sleep symbol weather|space nature night sky gray twilight planet evening sleep symbol weather|space nature yellow twilight planet night evening sleep symbol weather|space nature twilight planet night evening sleep waxing symbol weather|space nature twilight planet night evening sleep symbol weather|space nature twilight planet night evening sleep symbol weather|ramadan space night sleep sky evening magic weather|space nature twilight planet night evening sleep creepy dark molester weather|space nature twilight planet night evening sleep weather|dreams nature twilight planet space night evening sleep weather|weather temperature hot cold|bright rays space sunny weather nature brightness summer beach spring black sunshine|bright nature twilight planet space night evening sleep moonface smiley smiling weather|beach bright day heat shine sunny sunshine weather nature morning sky smiley smiling space summer sunface|saturn saturnine outerspace planets space|astronomy medium stars white night yellow gold|glittery glow night shining sparkle win awesome good magic star2|falling night space photo activity meteoroid stars upon when wish you|space photo stars galaxy night sky universe weather|weather sky cloudy overcast|cloudy weather nature morning fall spring partly sunny|thunder thunderstorm weather|weather white|weather white|weather white|weather|cold weather|weather thunder|cloud weather whirlwind cyclone twister|cloud weather|blow cloud gust air blowing mother nature weather|dizzy hurricane twister typhoon weather swirl blue cloud vortex spiral whirlpool spin tornado|gay genderqueer glbt glbtq lesbian lgbt lgbtq lgbtqia nature pride queer rain trans transgender weather happy unicorn face photo sky spring primary|clothing rain weather drizzle collapsed pink|clothing rain weather spring open|clothing drop weather rainy spring raining|rain sun weather summer beach parasol|danger electric electricity lightning nature thunder thunderbolt zap weather bolt fast sign speed|cold snow weather winter season christmas xmas snowing|cold man snow winter season weather christmas xmas frozen snowflakes snowing|cold man winter season weather christmas xmas frozen frosty olaf|space|af burn flame hot lit litaf tool cook snapstreak remove|cold comic drop nature sad sweat tear water weather drip faucet spring|nature ocean surf surfer surfing sea tsunami disaster beach waves weather|clothing eye eyeglasses eyewear fashion accessories eyesight nerdy dork geek|dark eye eyewear glasses face cool accessories|dive eye protection scuba swimming welding eyes safety clothing|clothes doctor dr experiment jacket scientist white chemist clothing|emergency protection|clothing employed serious shirt tie suitup formal fashion cloth business|blue casual clothes clothing collar dressed shopping tshirt weekend fashion cloth tee polo|blue casual clothes clothing denim dressed pants shopping trousers weekend fashion|bundle cold neck up winter clothes clothing|hand hands winter clothes clothing|brr bundle cold jacket up clothing|stocking stockings clothes clothing pair|clothes clothing dressed fancy shopping fashion gown skirt|clothing comfortable dress fashion women female japanese dressing gown|clothing dress saree shari|bathing suit fashion clothing swim|bathing one piece suit swimsuit underwear clothing brief swim|bathing pants suit swimsuit underwear clothing swim|bathing beach clothing pool suit swim swimming female woman girl fashion summer bathers swimsuit|blouse clothing collar dress dressed lady shirt shopping fashion bags female pink womans|clack clap cool cooling dance flirt flutter hot shy flamenco sensu|clothes clothing coin dress fancy handbag shopping fashion accessories money sales wallet|bag clothes clothing dress lady purse shopping fashion accessory accessories women s|clothes clothing dress handbag pouch purse accessories shopping small|bag hotel mall buy purchase|backpacking bag bookbag education rucksack satchel school student activity|beach flip flop sandals shoe thongs zori footwear summer flops jandals|brown clothes clothing feet foot kick shoes shopping fashion male dress mans|athletic clothes clothing fast kick shoes shopping sneaker tennis sports sneakers runner sport trainer|backpacking brown camping outdoors shoe clothing|ballet comfy flats slip slipper clothing woman s|clothes clothing dress fashion heel heels shoes shopping stiletto woman female pumps|clothing shoe shoes fashion flip flops heeled sandals womans|dance clothing pointe shoe|clothes clothing dress shoe shoes shopping fashion boots cowgirl heeled high knee womans|afro comb groom|clothing family king medieval queen royal royalty win kod leader lord|clothes clothing garden hats party fashion accessories female lady spring bow ladies womans|clothes clothing fancy formal magic tophat gentleman classy circus activity entertainment groom wear|celebration clothing education hat scholar school college degree university legal learn academic activity board graduate mortar square|baseball bent dad hat clothing|army soldier war warrior protection|aid cross face hat construction build white|clothing necklace religion dhikr religious rosary|cosmetics date makeup female girl fashion woman gloss lip style|diamond engaged engagement married romance shiny sparkling wedding propose marriage valentines fashion jewelry gem|diamond engagement jewel money romance wedding blue ruby jewelry gemstone|mute quiet silent sound volume silence cancellation off stroke|soft sound silence broadcast|sound broadcast low one reduce wave|loud music sound noise noisy broadcast entertainment increase three waves|address communication loud public sound volume announcement bullhorn megaphone pa system|cheering sound speaker volume bullhorn communication mega|post instrument music bugle communication entertainment french|break church sound notification christmas xmas chime liberty ringer wedding|forbidden mute no not prohibited quiet silent sound volume cancellation disabled muted notifications off ringer stroke|music note treble clef compose activity entertainment sheet|music sound score tone activity beamed eighth entertainment notes pair quavers|music note sound score activity entertainment multiple singing|mic music sing recording artist talkshow podcast|music scale|music dial|karaoke mic music sing sound pa talkshow activity entertainment singing|earbud sound music score gadgets activity earphone earphones entertainment headphones ipod|entertainment tbt video communication music podcast program digital wireless|instrument music sax jazz blues activity entertainment|box concertina instrument music squeeze squeezebox accordian|instrument music strat acoustic activity bass electric entertainment rock|instrument music piano compose activity entertainment|instrument music brass activity entertainment horn jazz|instrument music orchestra symphony activity entertainment quartet smallest string world s|music stringed instructment activity entertainment instrument|drumsticks music instrument snare|beat conga instrument rhythm music djembe|cha dance instrument music party percussion rattle shake shaker|band fife flautist instrument marching music orchestra piccolo pipe recorder woodwind bamboo pied piper|cell communication telephone technology apple gadgets dial iphone smartphone responsive design|build call cell communication receive telephone iphone incoming calling left pointing rightwards|phone technology communication dial black rotary|communication phone voip technology dial call handset|communication bbcall oldschool 90s beeper bleeper|communication technology facsimile|power energy sustain aa phone|drained electronic energy power dead no red|electricity charger power ac adaptor cable|computer office pc personal technology screen display monitor desktop notebook|monitor technology computing screen imac|computer paper ink|computer technology type input text|click button three|computer technology trackpad|minidisk optical technology record data 90s entertainment minidisc|computer oldschool technology save 90s 80s|blu ray cd computer dvd technology disc 90s compact rom|blu ray cd computer disk optical disc entertainment rom video|calculation calculator count counting frame math|bollywood cinema film hollywood record activity entertainment video|cinema movie entertainment strip|cinema movie video tape record entertainment|action movie film record activity clapboard director entertainment slate|tv video technology program oldschool show entertainment|photo selfie snap tbt trip video gadgets photography digital entertainment|video photography gadgets photo snapshots|camcorder tbt film record entertainment|old school tape vcr vhs video record oldschool 90s 80s entertainment|lab pointing science search tool zoom find detective icon mag magnifier|contact lab pointing science search tool zoom find detective icon mag magnifier seo|light fire wax|comic electric idea electricity|electric light tool torch dark camping sight night|bar light restaurant halloween spooky asian izakaya japanese|light oil lighting|book decorated education school writing classroom notes record paper study|education read library knowledge textbook learn red|education fantasy knowledge library novels reading read literature learn study novel|education fantasy library reading read knowledge study textbook|education fantasy library reading read knowledge learn study textbook|education fantasy library reading read knowledge textbook study|book education fantasy knowledge library novels reading school study literature pile stack|stationery record notes paper study black book composition white|notebook notes paper binder book bound spiral yellow|document paper documents office curled curly license|paper documents ancient history degree document parchment|document paper documents office information printed|communication news paper press headline|news paper press headline delivery roll|mark marker favorite save order tidy|mark favorite label save price tag|tag sale|bank bet billion cash cost dollar gold million moneybag paid paying pot rich win payment coins sale cream moneybags|dollar euro gold metal money rich silver treasure currency|bank bill currency money note sales japanese dollar banknotes sign|bank bill currency money note sales american banknotes sign|100 bank bill currency money note rich sales dollar banknotes sign|bank bill billion cash currency money note pounds british sterling sales bills uk england banknotes quid sign twenty|bank banknote bill billion cash dollar fly million note pay bills payment sale flying losing|bank cash charge money pay sales dollar bill payment shopping amex club diners mastercard subscription visa|accounting bookkeeping evidence invoice proof expenses|bank currency graph growth market money rise trend upward green square presentation stats exchange rate sign upwards|e mail email letter postal inbox communication|email letter communication inbox symbol|delivering e mail email letter receive sent inbox communication fast lines|communication down e mail email letter outgoing send sent above downwards insert|box email letter mail sent inbox communication|box email letter mail receive zero documents communication|box communication delivery parcel shipping mail gift cardboard moving container|communication mail postbox email inbox|mail postbox email communication inbox|mail postbox email inbox communication|mail postbox email inbox communication no|mail mailbox email letter envelope communication|election vote voting|stationery write paper writing school study lead pencil2 typos|pen stationery writing write fountain|stationery writing write communication left lower|ballpoint stationery writing write communication left lower|painting drawing creativity art brush communication left lower|drawing creativity communication left lower|communication media notes pencil write documents stationery paper writing legal exam quiz test study compose document memorandum note documentation|office business documents work law legal job career suitcase|documents business office closed directory manilla|documents load|organizing business stationery|date schedule day emoji july world|schedule date planning day desk|note pad memo stationery|pad date schedule planning|old rolodex school business stationery system|data graph growth right trend up upward presentation stats recovery business economics money sales good success metrics pointing positive upwards analytics|data down downward graph negative trend presentation stats recession business economics money sales bad failure downwards pointing metrics|data graph presentation stats metrics|do list notes stationery documents|collage pin stationery mark here location tack thumb|location map pin stationery here dropped red|documents stationery clippy|link paperclip documents stationery communication|angle edge math straightedge stationery calculate length school drawing architect sketch|angle math rule set slide triangle stationery architect sketch|cut cutting paper tool stationery black|business stationery database|filing paper organizing|can garbage trash waste bin rubbish toss basket litter wastepaper|closed lock private security password padlock privacy|cracked lock open unlock privacy security padlock|ink lock nib privacy security secret fountain|bike closed lock secure security privacy secret|keys lock major password unlock door gold|clue lock door password|home improvement repairs tool tools build create claw handyman|ax chop hatchet split wood tool cut|hammer mining tool tools dig pickaxe|tool tools build create|spanner tool tools build create|knife weapon|weapon|boom comic dangerous explosion hot explode terrorism|rebound repercussion weapon australia|archer archery sagittarius tool weapon zodiac sports|weapon protection security|carpenter cut lumber tool trim chop hand|home improvement spanner tool tools diy ikea fix maintainer|flathead handy screw tool tools|home improvement tool handy tools fix screw|cog cogwheel tool|compress tool vice compression table winzip|justice libra scales tool weight zodiac law fairness|accessibility blind probing|links rings url chain hyperlink linked symbol|break breaking cuffs freedom constraint|chain lock arrest|catch crook curve ensnare point selling tools fishing tool|box chest mechanic red tool tools diy fix maintainer|attraction horseshoe magnetic negative positive shape u|climb rung step tools tool|chemistry tool distilling science experiment|chemist chemistry experiment lab science|bacteria biologist biology culture lab|biologist evolution gene genetics life double helix|experiment lab science tool laboratory zoomin study investigate magnify|contact extraterrestrial science tool stars space zoom astronomy stargazing|aliens contact dish science communication future radio space signal|doctor flu medicine needle shot sick tool vaccination health hospital drugs blood nurse vaccine|bleed donation injury medicine menstruation period hurt harm wound doctor|doctor drugs medicated medicine pills sick vitamin health pharmacy drug capsule tablet|heal aid band doctor medicine plaster|aid cane disability help hurt injured mobility stick accessibility assist|doctor heart medicine health healthcheck|bones doctor medical skeleton skull xray medicine|back closet front house entry exit doorway|accessibility hoist lift|makeup reflection reflector speculum|air frame fresh opening transparent view scenery glass|hotel sleep rest bedroom|hotel read chill lounge settee sofa|seat sit furniture|bathroom restroom wc washroom potty loo|cup force plumber poop suction toilet|water clean bathroom bath head|bath clean shower bathroom bubble|bait cheese lure mousetrap snare rodent|sharp shave cut|moisturizer shampoo sunscreen|diaper punk rock|cleaning sweeping witch brush sweep|farming laundry picnic|toilet towels|cask pail vat water container|bar bathing clean cleaning lather soapdish|bubble burp clean floating pearl soap underwater fun carbonation sparkling|bathroom brush clean dental hygiene teeth toiletry|absorbing cleaning porous soak|extinguish quench|trolley|smoking kills tobacco joint smoke activity symbol|dead death vampire die rip graveyard cemetery casket funeral box remove|cemetery dead grave graveyard memorial rip tomb tombstone death halloween|ashes death dead die rip vase|bead blue charm evil eye talisman boncugu|amulet fatima fortune guide hand mary miriam palm protect protection religion|face moyai statue stoneface travel rock easter island carving human stone|card demonstration notice picket plaque protest sign announcement lawn post|credentials document id license security|automated bank cash money teller sales blue square payment machine|litterbin blue square human info its litterbox person place put symbol trash|drinking blue square liquid restroom cleaning faucet drink symbol tap thirst thirsty|access handicap blue square disabled accessibility accessible bathroom|bathroom lavatory man restroom toilet wc blue square gender male mens symbol|bathroom lavatory restroom toilet wc woman purple square female loo gender symbol womens|bathroom lavatory toilet wc blue square refresh gender sign|changing orange square child change nursery station|bathroom lavatory restroom toilet wc blue square|custom blue square border permissions authorization roles|packing passport border blue square|arrived bags case checked journey packing plane ready travel trip blue square airport transport|baggage case locker blue square travel bag key locked suitcase|caution exclamation wip alert error problem issue sign symbol|child pedestrian traffic school warning danger sign driving yellow diamond kids experience usability|do fail forbidden not pass prohibited traffic limit security privacy bad denied stop circle|entry forbidden no not smoke forbid stop limit denied disallow circle backslash banned block crossed red restricted sign|bicycle bike forbidden not prohibited bikes cyclist circle sign vehicle|forbidden not prohibited smoke cigarette blue square smell sign symbol|forbidden litter not prohibited trash bin garbage circle do symbol|dry drinking prohibited drink faucet tap circle forbidden no not symbol|forbidden not pedestrian prohibited rules crossing walking circle people|cell forbidden not phone prohibited telephone iphone mute circle communication smartphones|18 age forbidden not prohibited restriction underage drink pub night minor circle nsfw symbol|sign nuclear danger international radiation symbol|sign danger|cardinal direction north blue square continue top black pointing upwards upgrade|direction intercardinal northeast blue square point diagonal east north upper|cardinal direction east blue square next black pointing rightwards|direction intercardinal southeast blue square diagonal east lower south|cardinal direction south blue square bottom black downwards pointing downgrade|direction intercardinal southwest blue square diagonal lower south west|cardinal direction west blue square previous back black leftwards pointing|direction intercardinal northwest blue square point diagonal north upper west|blue square direction way vertical arrows intercardinal northwest|shape direction horizontal sideways arrows|back return blue square undo enter curved email hook leftwards reply|blue square return rotate direction email forward hook rightwards curved|blue square direction top heading pointing rightwards then upwards|blue square direction bottom curved downwards heading pointing rightwards then|arrow refresh reload sync cycle round repeat circle downwards open upwards|again anticlockwise arrow deja refresh rewindershins vu blue square sync cycle circle downwards open rotate switch upwards withershins|words return above leftwards|words above leftwards|mark words above exclamation left right|brb omw words above rightwards|homie up words blue square above upwards|pray religion church temple prayer building religious|atheist science physics chemistry|hindu religion hinduism buddhism sikhism jainism aumkara omkara pranava symbol|jew jewish judaism religion magen|buddhist religion hinduism buddhism sikhism jainism helm|difficult lives religion tao taoist total yinyang balance|christ christian religion christianity|christian religion suppedaneum|islam muslim ramadan religion|healing peaceful hippie sign|candelabrum candlestick hanukkah jewish judaism religion candles branches chanukiah nine|fortune jewish judaism purple square religion hexagram dot middle|deg fateh khalsa religion sikh sikhism tegh|horoscope ram zodiac sign purple square astrology|bull horoscope ox zodiac purple square sign astrology|horoscope twins zodiac sign purple square astrology|crab horoscope zodiac sign purple square astrology|horoscope lion zodiac sign purple square astrology|horoscope zodiac sign purple square astrology maiden virgin|balance horoscope justice scales zodiac sign purple square astrology|horoscope scorpion scorpius zodiac sign purple square astrology|archer horoscope zodiac sign purple square astrology|goat horoscope zodiac sign purple square astrology|bearer horoscope water zodiac sign purple square astrology|fish horoscope zodiac purple square sign astrology|bearer serpent snake zodiac sign purple square constellation astrology|arrow crossed blue square music random arrows rightwards symbol twisted merge|arrow clockwise loop record arrows circle leftwards open retweet rightwards symbol|arrow clockwise once blue square loop arrows circle circled leftwards number one open overlay rightwards symbol track|arrow right triangle blue square direction black forward pointing|arrow double blue square play speed continue black pointing right symbol triangle|arrow scene triangle forward blue square bar black double pointing right skip symbol vertical|arrow right triangle blue square bar black double pointing symbol vertical|arrow left triangle blue square direction backward black pointing|arrow double rewind play blue square black left pointing symbol triangle revert|arrow previous scene triangle backward bar black double left pointing skip symbol vertical|arrow red up blue square triangle direction point forward top pointing small|arrow double blue square direction top black pointing triangle|arrow down red blue square direction bottom pointing small triangle|arrow double blue square direction bottom black pointing triangle|bar double vertical blue square symbol|square blue black symbol|circle blue square black symbol|blue square symbol|camera film movie blue square record curtain stage theater activity entertainment movies screen symbol|brightness low sun afternoon warm summer decrease symbol|brightness light sun high increase symbol|bar cell communication mobile phone signal telephone blue square reception internet connection wifi bluetooth cellular stairs strength|broadband computer connectivity hotspot internet network router smartphone wi fi wifi wlan contactless signal|cell communication mobile phone telephone orange square heart silent|cell telephone mute orange square silence quiet communication|woman women lady girl symbol venus|man boy men mars symbol|lgbtq female lgbt male pride sign stroke|cancel multiplication sign x math calculation heavy symbol|sign math calculation addition more increase heavy symbol add|heavy math sign calculation subtract less symbol remove|division heavy math sign calculation symbol|answer equal equality math|forever unbounded universal paper permanent sign|bangbang punctuation surprise red|interrobang punctuation wat surprise red|punctuation doubt confused black ornament|outlined punctuation doubts gray huh confused grey ornament|bang outlined punctuation surprise gray wow warning grey ornament|bang punctuation heavy danger surprise wow warning symbol|punctuation draw line moustache mustache squiggle scribble wave|bank money sales dollar travel|billion cash charge currency million money pay sales payment buck|aesculapius medicine staff health hospital asclepius asklepios care doctor rod snake|recycle arrow environment garbage trash black green logo universal reuse|knights decorative scout new orleans saints scouts|anchor poseidon ship tool weapon spear pitchfork|fire forbid tag tofu|chevron green leaf tool yellow badge shield mark shoshinsha|heavy large o round correct mark|checked checkmark complete completed done fixed tick green square ok agree vote election answer heavy symbol white pass tests|ballot checked done off tick ok agree confirm black square vote election yes checkbox mark|checked checkmark done heavy tick ok nike answer yes|cancel multiplication multiply x no delete remove red|multiplication multiply square x green no deny negative squared|curl scribble draw shape squiggle curling|curl tape cassette curling voicemail|graph presentation stats business economics bad m mcdonald s|star sparkle green square|orange square shape polygon black|stars green square awesome good fireworks|c ip license circle law legal sign|r alphabet circle sign|tm trademark brand law legal sign|symbol blue square twitter hash hashtag key number octothorpe pound sign|star asterisk|zero numbers blue square null digit|one blue square numbers digit|two numbers prime blue square digit|three numbers prime blue square digit|four numbers blue square digit|five numbers blue square prime digit|six numbers blue square digit|seven numbers blue square prime digit|eight blue square numbers digit|nine blue square numbers digit|numbers blue square ten number|abcd letters alphabet words blue square capital symbol|abcd letters blue square alphabet small symbol|1234 blue square 1 2 3 4 numeric symbol|blue square music note ampersand percent glyphs characters symbol|abc alphabet blue square symbol|red square alphabet letter capital latin negative squared|red square alphabet negative squared|red square alphabet letter capital latin negative squared|alphabet words red square clear sign squared|words blue square sign squared|blue square words sign squared|i blue square alphabet letter info lowercase source tourist|identity purple square words identification sign squared|circle alphabet blue letter capital latin metro|blue square words start fresh sign squared|blue square words shape icon blooper good no sign squared|alphabet red square letter capital latin negative o2 squared|okay good agree yes blue square sign squared|parking cars blue square alphabet letter capital latin negative sign squared|help red square words emergency 911 distress sign signal squared|mark blue square above high exclamation level sign squared|versus words orange square squared|katakana blue square destination koko meaning sign squared word|katakana blue square meaning sa sign squared|ideograph chinese month moon orange square kanji cjk meaning radical sign squared u6708 unified|ideograph orange square chinese have kanji cjk exist meaning own sign squared u6709 unified|ideograph chinese point green square kanji cjk finger meaning sign squared u6307 unified|ideograph chinese kanji obtain get circle acquire advantage circled meaning sign|ideograph cut divide chinese kanji pink square bargain cjk meaning sale sign squared u5272 unified|ideograph nothing chinese kanji orange square cjk lacking meaning negation sign squared u7121 unified|ideograph kanji chinese forbidden limit restricted red square cjk forbid meaning prohibit sign squared u7981 unified|ideograph ok good chinese kanji agree yes orange circle accept circled meaning sign|ideograph chinese kanji orange square apply cjk form meaning monkey request sign squared u7533 unified|ideograph chinese join kanji red square agreement cjk meaning sign squared together u5408 unified|ideograph kanji chinese empty sky blue square 7a7a available cjk meaning sign squared u7a7a unified|ideograph chinese kanji red circle circled congratulate congratulation meaning sign|ideograph privacy chinese sshh kanji red circle circled meaning sign|ideograph opening hours orange square 55b6 chinese cjk meaning operating sign squared u55b6 unified work|ideograph full chinese red square kanji 6e80 cjk fullness meaning sign squared u6e80 unified|geometric shape error danger large|round geometric large|round geometric large|round geometric large|geometric shape icon button large|round geometric large|round geometric large|geometric shape button round medium|geometric shape round medium|card penalty geometric large|geometric large|card penalty geometric large|geometric large|geometric large|geometric large|geometric large|geometric shape icon button|geometric shape icon stone button|geometric shape button icon|geometric shape stone icon|geometric icon shape button|geometric shape stone icon button|geometric shape icon|geometric shape icon|geometric shape jewel gem|geometric shape jewel gem|geometric shape jewel gem|geometric shape jewel gem|geometric shape direction top pointing small|geometric shape direction bottom pointing small|comic geometric jewel blue gem crystal fancy cuteness flower inside kawaii shape|geometric input old music circle|geometric outlined shape input|geometric shape input frame|celebration halloween pumpkin light creepy fall activity entertainment gourd|celebration festival vacation december xmas activity entertainment|boom celebration entertainment yolo photo festival carnival congratulations activity explosion|boom celebration fireworks sparkle stars night shine activity entertainment firework hanabi senko|dynamite explosive fire fireworks light pop popping spark boom explode explosion|magic sparkle star stars shine shiny cool awesome good entertainment glitter|birthday celebrate celebration party circus activity entertainment red|awesome birthday celebrate celebration excited hooray tada woohoo congratulations magic circus activity entertainment hat|celebrate celebration party woohoo festival birthday circus activity entertainment|banner celebration japanese plant nature branch summer bamboo wish star festival tanzaku activity entertainment|bamboo celebration japanese plant nature vegetable panda new years activity kadomatsu year|celebration doll festival toy kimono activity entertainment hinamatsuri imperial|celebration fish japanese koinobori banner activity entertainment flag flags socks wind|bell celebration nature ding spring activity entertainment furin jellyfish|celebration photo japan asia tsukimi activity autumn dumplings entertainment festival grass harvest mid rice scene|gift good hongbao lai luck money see ang packet pao|celebration decoration pink girl bowtie bow|birthday bow box celebration christmas present surprise xmas entertainment|celebration sports cause support awareness|ticket sports concert entrance entertainment|admission stub event concert pass activity entertainment tour world|award celebration winning army decoration medallion|champion champs prize slay sport victory win winning award contest place ftw ceremony championship winner winners|award gold winner winning|first gold award winning|second silver award|bronze third award|football futbol sport sports|ball sport sports balls softball|ball glove sports underarm balls game sport|ball hoop sport sports balls nba orange|ball game sports balls|ball bowl sport super sports balls nfl gridiron superbowl|ball sport sports team league union|ball racquet sport sports balls green racket|ultimate sports frisbee game golf sport|ball game sport strike sports fun play pin pins skittles ten|ball bat sports field|ball game stick sports|game puck stick sports|ball goal sports stick game sport|ball bat game paddle pingpong table tennis sports|birdie game racquet shuttlecock sports|sports fighting|judo karate taekwondo|sports catch|golf sport sports business summer|skating sports|entertainment fish sport food hobby summer rod|scuba snorkeling sport ocean|athletics sash play pageant marathon singlet|ski snow sport sports winter cold boot skiing|luge sledge sleigh snow toboggan|game rock sports|bull dart direct entertainment game hit target play bar activity archery darts eye|fluctuate toy yoyo|fly soar wind toy|gun handgun revolver tool weapon violence shoot squirt|8ball billiard eight game hobby luck magic billiards cue snooker|fairy fairytale fantasy fortune future magic tale tool disco party circus teller clairvoyant psychic purple|magician witch wizard supernature power|controller entertainment play console ps4 gamepad playstation u wii xbox|game video videogame play entertainment|casino gamble gambling game slots bet vegas fruit luck activity poker|dice entertainment random tabletop play luck gambling|clue interlocking jigsaw|plaything plush stuffed toy|candy celebrate celebration cinco de festive mayo party pinada mexico|dance disco glitter party|babooshka baboushka babushka doll matryoshka russia toy russian|card game poker cards suits magic black spades|card emotion game hearts poker cards magic suits black|card game poker cards magic suits black diamonds|card clubs game poker cards magic suits black|dupe expendable black game piece|card game wildcard poker cards play magic black entertainment playing|game play chinese kanji tile|card game japanese sunset red activity deck entertainment hanafuda hwatu|actor actress art entertainment mask theater theatre thespian acting drama activity comedy greek logo masks tragedy|art frame museum painting photography|art artsy arty colorful creative entertainment museum painter painting design paint draw colors activity improve|needle sewing spool string crafts|embroidery sew stitches sutures tailoring thread|ball crochet knit crafts|cord rope tangled tie twine twist scout|checkered finish flags game race racing sport win contest finishline gokart girl grid milestone|construction golf post mark milestone place pole red|celebration cross japanese nation country border activity flag two|waving pirate|waving losing loser lost surrender give up fail|bisexual gay genderqueer glbt glbtq lesbian lgbt lgbtq lgbtqia pride queer trans transgender homosexual|blue light pink white pride lgbtq lgbt trans|jolly plunder roger treasure skull crossbones banner||ad nation country banner andorran|nation country banner emirati uae|af nation country banner afghan|nation country banner|ai nation country banner anguillan|al nation country banner albanian|am nation country banner armenian|ao nation country banner angolan|aq nation country banner antarctic|ar nation country banner argentinian|ws nation country banner samoan|nation country banner austrian|au nation country banner aussie australian heard mcdonald|aw nation country banner aruban|nation country banner|az nation country banner azerbaijani|nation country banner|bb nation country banner bajan barbadian|bd nation country banner bangladeshi|be nation country banner belgian|nation country banner burkinabe|bg nation country banner bulgarian|bh nation country banner bahrainian bahrani|bi nation country banner burundian|bj nation country banner beninese|saint nation country banner|bm nation country banner bermudan|bn darussalam nation country banner bruneian|bo nation country banner bolivian|bonaire nation country banner eustatius saba sint|br nation country banner brasil brazilian|bs nation country banner bahamian|bt nation country banner bhutanese|norway|bw nation country banner batswana|by nation country banner belarusian|bz nation country banner belizean|ca nation country banner canadian|nation country banner island|democratic republic nation country banner drc|nation country banner|nation country banner republic|ch nation country banner cross red swiss|ivory coast nation country banner divoire|nation country banner island islander|nation country banner chilean|cm nation country banner cameroonian|chinese prc country nation banner cn indicator letters regional symbol|co nation country banner colombian||nation country banner rican|cu nation country banner cuban|cabo nation country banner verdian|nation country banner antilles curacaoan|nation country banner|cy nation country banner cypriot|cz nation country banner czech republic|german nation country banner de deutsch indicator letters regional symbol||dj nation country banner djiboutian|dk nation country banner danish|dm nation country banner|nation country banner dom rep|dz nation country banner algerian||ec nation country banner ecuadorian|ee nation country banner estonian|eg nation country banner egyptian|nation country banner saharan west|er nation country banner eritrean|nation country banner ceuta es indicator letters melilla regional spanish symbol|et nation country banner ethiopian|banner eu|fi nation country banner finnish|fj nation country banner fijian|malvinas nation country banner falklander falklands island islas|federated states nation country banner micronesian|nation country banner island islander|banner nation french country clipperton fr indicator island letters martin regional saint st symbol|ga nation country banner gabonese|great britain northern ireland nation country banner british uk english england union jack cornwall gb scotland wales|gd nation country banner grenadian|ge nation country banner georgian|nation country banner guinean|gg nation country banner|gh nation country banner ghanaian|gi nation country banner gibraltarian|gl nation country banner greenlandic|gm nation country banner gambian|gn nation country banner guinean|gp nation country banner guadeloupean|gn nation country banner equatoguinean guinean|gr nation country banner greek|nation country banner island|gt nation country banner guatemalan|gu nation country banner chamorro guamanian|gw nation country banner|gy nation country banner guyanese|nation country banner|island|hn nation country banner honduran|hr nation country banner croatian|ht nation country banner haitian|hu nation country banner hungarian|nation country banner island|nation country banner indonesian|ie nation country banner irish|il nation country banner israeli|nation country banner manx|nation country banner indian|nation country banner chagos diego garcia island|iq nation country banner iraqi|islamic republic nation country banner iranian|nation country banner icelandic|nation country banner indicator italian letters regional symbol|je nation country banner|jm nation country banner jamaican|jo nation country banner jordanian|japanese nation country banner jp ja indicator letters regional symbol|ke nation country banner kenyan|kg nation country banner kyrgyzstani|kh nation country banner cambodian|ki nation country banner i|km nation country banner comoran|saint nation country banner|nation country banner korean|nation country banner indicator korean kr letters regional symbol|kw nation country banner kuwaiti|nation country banner caymanian island|kz nation country banner kazakh kazakhstani|lao democratic republic nation country banner laotian|lb nation country banner lebanese|saint nation country banner|li nation country banner liechtensteiner|nation country banner lankan|lr nation country banner liberian|ls nation country banner basotho|lt nation country banner lithuanian|lu nation country banner luxembourger|lv nation country banner latvian|ly nation country banner libyan|ma nation country banner moroccan|mc nation country banner monegasque|republic nation country banner moldovan|me nation country banner montenegrin||mg nation country banner madagascan|nation country banner island marshallese|nation country banner macedonian|ml nation country banner malian|mm nation country banner burmese myanmarese|mn nation country banner mongolian|nation country banner macanese macau|nation country banner island micronesian north|mq nation country banner martiniquais snake|mr nation country banner mauritanian|ms nation country banner montserratian|mt nation country banner maltese|mu nation country banner mauritian|mv nation country banner maldivian|mw nation country banner malawian|mx nation country banner mexican|my nation country banner malaysian|mz nation country banner mozambican|na nation country banner namibian|nation country banner caledonian|ne nation country banner nigerien|nation country banner|nation country banner nigerian|ni nation country banner nicaraguan|nl nation country banner dutch|no nation country banner bouvet jan mayen norwegian svalbard|np nation country banner nepalese|nr nation country banner nauruan|nu nation country banner niuean|nation country banner kiwi|om symbol nation country banner omani|pa nation country banner panamanian|pe nation country banner peruvian|nation country banner polynesian|nation country banner guinean png|ph nation country banner|pk nation country banner pakistani|pl nation country banner polish|saint nation country banner|nation country banner island|nation country banner rican|palestine nation country banner|pt nation country banner portugese|pw nation country banner palauan|py nation country banner paraguayan|qa nation country banner qatari|nation country banner reunionnais|ro nation country banner romanian|rs nation country banner serbian|russian federation nation country banner indicator letters regional ru symbol|rw nation country banner rwandan|nation country banner arabian|nation country banner island islander|sc nation country banner seychellois|sd nation country banner sudanese|se nation country banner swedish|sg nation country banner singaporean|ascension tristan da cunha saint nation country banner|si nation country banner slovenian||sk nation country banner slovakian slovak|nation country banner leonean|nation country banner sammarinese|sn nation country banner sengalese|so nation country banner somalian|sr nation country banner surinamer|sd nation country banner sudanese|nation country banner|nation country banner salvadoran|dutch nation country banner|syrian arab republic nation country banner|sz nation country banner swaziland||nation country banner island|td nation country banner chadian|antarctic lands nation country banner|tg nation country banner togolese|th nation country banner thai|tj nation country banner tajik|tk nation country banner tokelauan|nation country banner east timorese|nation country banner turkmen|tn nation country banner tunisian|nation country banner tongan|turkey nation country banner tr turkish|nation country banner|nation country banner tuvaluan|tw nation country banner china taiwanese|united republic nation country banner tanzanian|ua nation country banner ukrainian|ug nation country banner ugandan|us|un banner|america nation country banner american indicator islands letters outlying regional symbol us usa|uy nation country banner uruguayan|uz nation country banner uzbek uzbekistani|nation country banner vanticanien|saint nation country banner|ve bolivarian republic nation country banner venezuelan|bvi nation country banner island islander|us nation country banner america island islander states united usa|viet nam nation country banner vietnamese|vu nation country banner ni|nation country banner|ws nation country banner samoan|xk nation country banner kosovar|ye nation country banner yemeni|yt nation country banner|nation country banner african|zm nation country banner zambian|zw nation country banner zim zimbabwean|english cross george s st|scottish andrew s cross saltire st|welsh baner cymru ddraig dragon goch red y`.split('|');
+
+const CATS = [
+  {key:'_top',       icon:'⭐', label:'Frequently used'},
+  {key:'Smileys',    icon:'😀', label:'Smileys & emotion'},
+  {key:'Hands',      icon:'👋', label:'Hands & body'},
+  {key:'People',     icon:'🧑', label:'People'},
+  {key:'Animals',    icon:'🐶', label:'Animals'},
+  {key:'Plants',     icon:'🌵', label:'Plants & nature'},
+  {key:'Food',       icon:'🍎', label:'Food & drink'},
+  {key:'Travel',     icon:'🚗', label:'Travel & places'},
+  {key:'Objects',    icon:'💡', label:'Objects'},
+  {key:'Symbols',    icon:'❤️', label:'Symbols'},
+  {key:'Activities', icon:'⚽', label:'Activities'},
+  {key:'Flags',      icon:'🚩', label:'Flags'},
+];
+
+// Shown in place of "Frequently used" until there is some history.
+const SUGGESTED = ['thumbs up','red heart','face with tears of joy','party popper','folded hands','fire',
+  'smiling face with smiling eyes','eyes','check mark button','thinking face','loudly crying face','skull',
+  'rolling on the floor laughing','sparkles','hundred points','clapping hands','smiling face with hearts',
+  'person shrugging','rocket','waving hand'];
+
+// Extra search words: "keywords = emoji name | emoji name; …"
+const ALIASES = `
+lol haha laugh lmao = face with tears of joy | rolling on the floor laughing | grinning squinting face
+happy smile = grinning face | smiling face with smiling eyes | beaming face with smiling eyes | slightly smiling face
+sad unhappy = crying face | pensive face | slightly frowning face | loudly crying face | disappointed face
+cry sob tears = loudly crying face | crying face | face holding back tears
+love heart = red heart
+love crush = smiling face with heart-eyes | smiling face with hearts | heart hands | face blowing a kiss
+like yes approve good thumbsup = thumbs up
+dislike no bad thumbsdown = thumbs down
+thanks thank please pray hope = folded hands
+party celebrate congrats tada yay hooray = party popper | partying face | confetti ball | balloon
+lit hot flame = fire
+cool = smiling face with sunglasses
+angry mad rage = angry face | enraged face | face with symbols on mouth
+think hmm wonder = thinking face
+shrug idk whatever = person shrugging
+facepalm = person facepalming
+poop shit crap = pile of poo
+100 perfect = hundred points
+dead rip = skull | face with crossed-out eyes
+wow shock surprise omg = astonished face | exploding head | face screaming in fear
+mindblown = exploding head
+sick ill = face with thermometer | nauseated face | face with medical mask
+sleep tired = sleeping face | tired face | yawning face | zzz
+scared fear = fearful face | face screaming in fear
+kiss = face blowing a kiss | kiss mark
+hug = smiling face with open hands
+hi hello hey bye wave = waving hand
+ok okay = ok hand | thumbs up
+strong muscle gym = flexed biceps
+clap bravo applause = clapping hands
+look see watch = eyes
+check done tick yes = check mark button | check mark
+x wrong cancel no = cross mark
+warn alert caution = warning
+idea = light bulb
+money cash rich = money bag | money with wings | money-mouth face
+time clock = alarm clock | hourglass not done
+mail email = e-mail | envelope
+call = call me hand | telephone receiver
+phone = telephone receiver | telephone
+computer pc code = laptop
+music song = musical notes | musical note
+launch ship = rocket
+fix tools = hammer and wrench | wrench
+settings config = gear
+search find = magnifying glass tilted left
+lock secure password = locked | key
+pin = pushpin
+date = calendar
+coffee tea = hot beverage
+beer cheers = clinking beer mugs | beer mug | clinking glasses
+champagne = bottle with popping cork
+birthday = birthday cake
+gift present = wrapped gift
+win winner champion = trophy | 1st place medal
+goal target = bullseye
+game gaming = video game
+football = soccer ball
+car = automobile
+plane flight travel = airplane
+home = house
+world earth planet = globe showing europe-africa
+lightning zap electric power = high voltage
+boom explosion bang = collision
+magic shiny new ai = sparkles
+snow = snowflake
+cold = cold face | snowflake
+luck lucky = four leaf clover
+flower = cherry blossom | rose | bouquet
+dog puppy = dog face
+cat kitty = cat face
+king queen royal = crown
+diamond gem = gem stone
+recycle = recycling symbol
+question = red question mark
+stop forbidden ban = prohibited
+peace = victory hand | peace symbol
+rock metal = sign of the horns
+fuck = middle finger
+punch fistbump bro = oncoming fist
+praise = raising hands
+write note todo = memo | writing hand
+book read study = books
+photo picture = camera
+movie film = movie camera
+nervous = grinning face with sweat | anxious face with sweat | downcast face with sweat
+awkward cringe = grimacing face
+eyeroll = face with rolling eyes
+geek = nerd face
+silly crazy goofy = zany face
+yum delicious tasty = face savoring food
+shh quiet secret = shushing face
+angel innocent = smiling face with halo
+devil evil = smiling face with horns
+drunk = woozy face
+puke = face vomiting
+blush shy embarrassed = flushed face | smiling face with smiling eyes
+beg = pleading face
+o7 sir = saluting face
+sarcasm = upside-down face
+bored meh = neutral face | expressionless face | unamused face
+phew = relieved face | face exhaling
+pride lgbt gay = rainbow flag | rainbow
+usa america = flag: united states
+uk britain = flag: united kingdom
+`;
+
+// Loose ideas: searching the first word also finds emoji tagged with any of the others.
+const CONCEPTS = `
+fun = party celebrate celebration game play playing laugh joy entertainment dance dancing funny silly carnival amusement circus hooray excited toy playful goofy festival
+funny = lol laugh haha joke silly hilarious goofy clown
+happy = joy smile glad cheerful pleased delighted yay excited
+sad = unhappy cry tear depressed sorrow upset disappointed gloomy
+love = heart romance kiss crush adore valentine affection
+angry = mad rage furious annoyed grumpy hate
+scared = scary fear afraid horror spooky nervous anxious
+scary = horror spooky monster creepy halloween fear
+cute = adorable kawaii sweet lovely aww
+cool = awesome sunglasses chill stylish
+work = office job business briefcase computer meeting desk
+school = study book education student teacher learn
+food = eat meal hungry restaurant delicious snack lunch dinner breakfast
+drink = beverage thirsty bar alcohol cocktail
+weather = sun rain cloud snow storm wind
+sport = sports ball athlete fitness exercise match
+music = song instrument sing note melody
+travel = trip vacation holiday journey tourism transport
+money = cash dollar rich bank pay payment
+celebrate = party celebration congratulations tada hooray festival
+tech = computer technology device electronic gadget
+nature = plant tree flower animal outdoors
+animal = pet wildlife zoo creature
+night = moon dark star sleep
+morning = sunrise sun coffee breakfast
+summer = sun beach hot vacation
+winter = snow cold christmas
+holiday = vacation christmas celebration festival
+magic = sparkle wizard fantasy spell
+win = winner trophy medal champion victory success
+success = win trophy achievement done
+fail = failure wrong mistake oops loss
+sorry = apology pray sad regret
+agree = yes ok approve thumbs
+disagree = no reject wrong
+tired = sleepy exhausted sleep yawn
+sick = ill disease medical doctor
+party = celebration birthday dance festival
+fast = speed quick rush run
+slow = snail turtle wait
+hot = fire heat warm spicy
+cold = ice snow freeze frozen
+`;
+
+// ════════════════════════════════════════════════════════
+//  SKIN TONE
+// ════════════════════════════════════════════════════════
+const TONE_CHARS = ['', '\u{1F3FB}', '\u{1F3FC}', '\u{1F3FD}', '\u{1F3FE}', '\u{1F3FF}'];
+const TONE_SUPPORTED = new Set([
+  '☝','⛹','⛹‍♀️','⛹‍♂️','✊','✋',
+  '✌','✍','🎅','🏂','🏃','🏃‍♀️',
+  '🏃‍♀️‍➡️','🏃‍♂️','🏃‍♂️‍➡️','🏃‍➡️','🏄','🏄‍♀️',
+  '🏄‍♂️','🏇','🏊','🏊‍♀️','🏊‍♂️','🏋',
+  '🏋‍♀️','🏋‍♂️','🏌','🏌‍♀️','🏌‍♂️','👂',
+  '👃','👆','👇','👈','👉','👊',
+  '👋','👌','👍','👎','👏','👐',
+  '👦','👧','👨','👨‍⚕️','👨‍⚖️','👨‍✈️',
+  '👨‍❤️‍👨','👨‍❤️‍💋‍👨','👨‍🌾','👨‍🍳','👨‍🍼','👨‍🎓',
+  '👨‍🎤','👨‍🎨','👨‍🏫','👨‍🏭','👨‍💻','👨‍💼',
+  '👨‍🔧','👨‍🔬','👨‍🚀','👨‍🚒','👨‍🤝‍👨','👨‍🦯',
+  '👨‍🦯‍➡️','👨‍🦰','👨‍🦱','👨‍🦲','👨‍🦳','👨‍🦼',
+  '👨‍🦼‍➡️','👨‍🦽','👨‍🦽‍➡️','👩','👩‍⚕️','👩‍⚖️',
+  '👩‍✈️','👩‍❤️‍👨','👩‍❤️‍👩','👩‍❤️‍💋‍👨','👩‍❤️‍💋‍👩','👩‍🌾',
+  '👩‍🍳','👩‍🍼','👩‍🎓','👩‍🎤','👩‍🎨','👩‍🏫',
+  '👩‍🏭','👩‍💻','👩‍💼','👩‍🔧','👩‍🔬','👩‍🚀',
+  '👩‍🚒','👩‍🤝‍👨','👩‍🤝‍👩','👩‍🦯','👩‍🦯‍➡️','👩‍🦰',
+  '👩‍🦱','👩‍🦲','👩‍🦳','👩‍🦼','👩‍🦼‍➡️','👩‍🦽',
+  '👩‍🦽‍➡️','👫','👬','👭','👮','👮‍♀️',
+  '👮‍♂️','👰','👰‍♀️','👰‍♂️','👱','👱‍♀️',
+  '👱‍♂️','👲','👳','👳‍♀️','👳‍♂️','👴',
+  '👵','👶','👷','👷‍♀️','👷‍♂️','👸',
+  '👼','💁','💁‍♀️','💁‍♂️','💂','💂‍♀️',
+  '💂‍♂️','💃','💅','💆','💆‍♀️','💆‍♂️',
+  '💇','💇‍♀️','💇‍♂️','💏','💑','💪',
+  '🕴','🕵','🕵‍♀️','🕵‍♂️','🕺','🖐',
+  '🖕','🖖','🙅','🙅‍♀️','🙅‍♂️','🙆',
+  '🙆‍♀️','🙆‍♂️','🙇','🙇‍♀️','🙇‍♂️','🙋',
+  '🙋‍♀️','🙋‍♂️','🙌','🙍','🙍‍♀️','🙍‍♂️',
+  '🙎','🙎‍♀️','🙎‍♂️','🙏','🚣','🚣‍♀️',
+  '🚣‍♂️','🚴','🚴‍♀️','🚴‍♂️','🚵','🚵‍♀️',
+  '🚵‍♂️','🚶','🚶‍♀️','🚶‍♀️‍➡️','🚶‍♂️','🚶‍♂️‍➡️',
+  '🚶‍➡️','🛀','🛌','🤌','🤏','🤘',
+  '🤙','🤚','🤛','🤜','🤝','🤞',
+  '🤟','🤦','🤦‍♀️','🤦‍♂️','🤰','🤱',
+  '🤲','🤳','🤴','🤵','🤵‍♀️','🤵‍♂️',
+  '🤶','🤷','🤷‍♀️','🤷‍♂️','🤸','🤸‍♀️',
+  '🤸‍♂️','🤹','🤹‍♀️','🤹‍♂️','🤽','🤽‍♀️',
+  '🤽‍♂️','🤾','🤾‍♀️','🤾‍♂️','🥷','🦵',
+  '🦶','🦸','🦸‍♀️','🦸‍♂️','🦹','🦹‍♀️',
+  '🦹‍♂️','🦻','🧍','🧍‍♀️','🧍‍♂️','🧎',
+  '🧎‍♀️','🧎‍♀️‍➡️','🧎‍♂️','🧎‍♂️‍➡️','🧎‍➡️','🧏',
+  '🧏‍♀️','🧏‍♂️','🧑','🧑‍⚕️','🧑‍⚖️','🧑‍✈️',
+  '🧑‍❤️‍💋‍🧑','🧑‍❤️‍🧑','🧑‍🌾','🧑‍🍳','🧑‍🍼','🧑‍🎄',
+  '🧑‍🎓','🧑‍🎤','🧑‍🎨','🧑‍🏫','🧑‍🏭','🧑‍💻',
+  '🧑‍💼','🧑‍🔧','🧑‍🔬','🧑‍🚀','🧑‍🚒','🧑‍🤝‍🧑',
+  '🧑‍🦯','🧑‍🦯‍➡️','🧑‍🦰','🧑‍🦱','🧑‍🦲','🧑‍🦳',
+  '🧑‍🦼','🧑‍🦼‍➡️','🧑‍🦽','🧑‍🦽‍➡️','🧒','🧓',
+  '🧔','🧔‍♀️','🧔‍♂️','🧕','🧖','🧖‍♀️',
+  '🧖‍♂️','🧗','🧗‍♀️','🧗‍♂️','🧘','🧘‍♀️',
+  '🧘‍♂️','🧙','🧙‍♀️','🧙‍♂️','🧚','🧚‍♀️',
+  '🧚‍♂️','🧛','🧛‍♀️','🧛‍♂️','🧜','🧜‍♀️',
+  '🧜‍♂️','🧝','🧝‍♀️','🧝‍♂️','🫃','🫄',
+  '🫅','🫰','🫱','🫱‍🫲','🫲','🫳',
+  '🫴','🫵','🫶','🫷','🫸',
+]);
+
+// ════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const $q = $('q'), $tray = $('tray'), $cats = $('cats'), $scroll = $('scroll'), $list = $('list');
+const $browse = $('browse'), $results = $('results'), $panel = $('panel');
+const $pvEm = $('pv-em'), $pvNm = $('pv-nm'), $hints = $('hints'), $toneBtn = $('tone-btn');
+
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} },
+};
+const clamp = (v, lo, hi, dflt) => Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt;
+
+let usage = {};                 // {emoji: {n: count, t: last used}} (older entries are bare counts)
+try { usage = JSON.parse(store.get('ep_u') || '{}') || {}; } catch (e) { usage = {}; }
+let skinTone  = clamp(parseInt(store.get('ep_skin')), 0, 5, 0);
+let emojiSize = clamp(parseInt(store.get('ep_sz')), 18, 40, 24);
+let halfLife  = clamp(parseFloat(store.get('ep_hl')), 0.1, 3650, 5);   // days
+['ep_b', 'ep_cols', 'ep_bh'].forEach(store.del);                        // settings from the old UI
+
+let tray = [];                  // emoji queued to paste together
+let justAdded = false;          // the selected emoji was just put in the tray; Enter won't add it twice
+let browse = [];                // sections shown with an empty search
+let results = [];               // sections shown while searching (zero or one)
+let view = browse;              // whichever of the two is on screen
+let sel = {s: 0, i: 0};         // selected emoji: section index, item index
+let selEl = null;
+let cols = 0;
+let sent = false;
+
+// ════════════════════════════════════════════════════════
+//  INDEX
+// ════════════════════════════════════════════════════════
+const norm  = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const words = s => norm(s).split(/[^a-z0-9]+/).filter(Boolean);
+
+const ALL = [], BY_E = new Map(), BY_NAME = new Map();
+CATS.forEach(c => (DATA[c.key] || []).forEach(([e, d]) => {
+  const w = words(d);
+  const kn = KW[ALL.length] || '';
+  const it = {e, d, w, ws: new Set(w), n: w.join(' '), k: kn.split(' '), ks: new Set(kn.split(' ')), kn,
+              a: [], o: ALL.length, cat: c.key};
+  ALL.push(it);
+  if (!BY_E.has(e)) BY_E.set(e, it);
+  if (!BY_NAME.has(d)) BY_NAME.set(d, it);
+}));
+ALIASES.trim().split('\n').forEach(line => {
+  const [keys, names] = line.split('=');
+  names.split('|').forEach((n, rank) => {          // earlier names are the better match
+    const it = BY_NAME.get(n.trim());
+    if (it) keys.trim().split(/\s+/).forEach(k => it.a.push({k, rank}));
+  });
+});
+
+const RELATED = new Map(CONCEPTS.trim().split('\n').map(line => {
+  const [key, rel] = line.split('=');
+  return [key.trim(), rel.trim().split(/\s+/)];
+}));
+
+function getCount(e) {
+  const u = usage[e];
+  return !u ? 0 : typeof u === 'object' ? u.n : u;
+}
+function usageScore(e) {
+  const u = usage[e];
+  if (!u) return 0;
+  const n = typeof u === 'object' ? u.n : u;
+  const t = typeof u === 'object' ? u.t : Date.now();
+  return n * Math.pow(0.5, (Date.now() - t) / (halfLife * 86400000));
+}
+const TONE_RE = /[\u{1F3FB}-\u{1F3FF}]/gu;
+function withTone(em) {
+  if (!skinTone) return em;
+  const base = em.replace(/️/g, '');
+  if (!TONE_SUPPORTED.has(em) && !TONE_SUPPORTED.has(base)) return em;
+  const zwj = base.indexOf('‍');
+  if (zwj !== -1) return base.slice(0, zwj) + TONE_CHARS[skinTone] + base.slice(zwj);
+  return base + TONE_CHARS[skinTone];
+}
+
+function frequent() {
+  const keys = Object.keys(usage).filter(e => getCount(e) > 0);
+  keys.sort((a, b) => (usageScore(b) - usageScore(a)) || ((BY_E.get(a)?.o ?? 9999) - (BY_E.get(b)?.o ?? 9999)));
+  const max = Math.max(cols, 1) * 2;
+  if (keys.length) return {label: 'Frequently used', items: keys.slice(0, max).map(e => BY_E.get(e) || {e, d: e})};
+  return {label: 'Suggested', items: SUGGESTED.map(n => BY_NAME.get(n)).filter(Boolean).slice(0, max)};
+}
+
+// One edit apart (a typo): a changed, missing, extra or swapped letter.
+function near(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i++;
+  const ra = a.slice(i), rb = b.slice(i);
+  return ra.slice(1) === rb.slice(1) || ra.slice(1) === rb || ra === rb.slice(1) ||
+         (ra.length > 1 && ra[0] === rb[1] && ra[1] === rb[0] && ra.slice(2) === rb.slice(2));
+}
+// How well one query word matches one emoji; 0 is no match. Best kinds first:
+// curated alias, word of the name, keyword, related idea, prefix, substring, typo.
+function score(it, q, fuzzy) {
+  let s = 0;
+  for (const a of it.a) {
+    if (a.k === q) s = Math.max(s, 70 - a.rank);
+    else if (q.length > 1 && a.k.startsWith(q)) s = Math.max(s, 35 - a.rank);
+  }
+  if (s >= 60) return s;
+  if (it.ws.has(q)) return 60;
+  if (it.ks.has(q)) return 50;
+  if (RELATED.get(q)?.some(r => it.ws.has(r) || it.ks.has(r))) return 45;
+  if (it.w.some(w => w.startsWith(q))) return 40;
+  if (s) return s;
+  if (q.length > 1 && it.k.some(w => w.startsWith(q))) return 30;
+  if (q.length > 2 && (it.n.includes(q) || it.kn.includes(q))) return 10;
+  if (fuzzy && q.length > 3 && (it.w.some(w => near(w, q)) || it.k.some(w => near(w, q)))) return 6;
+  return 0;
+}
+// Every query word must match; better kinds of match and emoji you use more rank higher.
+function search(raw) {
+  const t = raw.trim();
+  const toks = t === '+1' ? ['thumbsup'] : t === '-1' ? ['thumbsdown'] : words(t);
+  if (!toks.length) return ALL.filter(it => it.e.includes(t));   // an emoji was typed or pasted
+  const full = toks.join(' ');
+  const pass = fuzzy => {
+    const hits = [];
+    for (const it of ALL) {
+      let total = 0;
+      for (const q of toks) {
+        const s = score(it, q, fuzzy);
+        if (!s) { total = 0; break; }
+        total += s;
+      }
+      if (!total) continue;
+      if (it.n === full) total += 40;
+      total += Math.min(20, usageScore(it.e) * 4);
+      hits.push([total, it]);
+    }
+    return hits;
+  };
+  let hits = pass(false);
+  if (!hits.length) hits = pass(true);                          // nothing found: forgive a typo
+  hits.sort((a, b) => b[0] - a[0] || a[1].o - b[1].o);
+  return hits.slice(0, 300).map(h => h[1]);
+}
+
+// ════════════════════════════════════════════════════════
+//  SECTIONS
+// ════════════════════════════════════════════════════════
+function fill(sec, items) {
+  sec.items = items;
+  sec.btns = items.map((it, i) => {
+    const b = document.createElement('button');
+    b.className = 'e'; b.tabIndex = -1;
+    b.textContent = withTone(it.e);
+    b._sec = sec; b._i = i;
+    return b;
+  });
+  sec.grid.replaceChildren(...sec.btns);
+}
+// Sections below the first screenful get their buttons right after the first paint, so the
+// window appears sooner. buildRest() is safe to call at any time.
+function buildRest() {
+  for (const sec of browse) if (sec.pending) { sec.pending = false; fill(sec, sec.items); }
+}
+function makeSection(key, label, items, lazy) {
+  const el = document.createElement('section');
+  const head = document.createElement('h2');
+  const grid = document.createElement('div');
+  head.textContent = label; grid.className = 'grid';
+  el.append(head, grid);
+  const sec = {key, el, head, grid, items, btns: [], pending: !!lazy};
+  if (!lazy) fill(sec, items);
+  return sec;
+}
+
+function refreshFrequent() {
+  const f = frequent();
+  browse[0].head.textContent = f.label;
+  fill(browse[0], f.items);
+  if (view === browse) select(sel.s, sel.i, false);
+}
+
+// ════════════════════════════════════════════════════════
+//  SELECTION
+// ════════════════════════════════════════════════════════
+function select(s, i, scroll) {
+  if (selEl) selEl.classList.remove('sel');
+  const sec = view[s];
+  if (sec?.pending) buildRest();
+  if (!sec) { sel = {s: 0, i: 0}; selEl = null; }
+  else {
+    i = Math.max(0, Math.min(i, sec.items.length - 1));
+    sel = {s, i};
+    selEl = sec.btns[i];
+    selEl.classList.add('sel');
+    if (scroll) selEl.scrollIntoView({block: 'nearest'});
+  }
+  justAdded = false;
+  drawFooter();
+}
+const current = () => view[sel.s]?.items[sel.i] || null;
+
+// Where a one-cell step lands; rows flow across section boundaries.
+function step(s, i, dx, dy) {
+  const len = n => view[n].items.length;
+  if (dx) {
+    i += dx;
+    if (i < 0) { if (s > 0) { s--; i = len(s) - 1; } else i = 0; }
+    else if (i >= len(s)) { if (s < view.length - 1) { s++; i = 0; } else i = len(s) - 1; }
+  }
+  const col = i % cols;
+  if (dy > 0) {
+    const lastRow = Math.floor((len(s) - 1) / cols) * cols;
+    if (i + cols < len(s)) i += cols;
+    else if (i < lastRow) i = len(s) - 1;
+    else if (s < view.length - 1) { s++; i = Math.min(col, len(s) - 1); }
+  } else if (dy < 0) {
+    if (i - cols >= 0) i -= cols;
+    else if (s > 0) { s--; i = Math.min(Math.floor((len(s) - 1) / cols) * cols + col, len(s) - 1); }
+  }
+  return [s, i];
+}
+function move(dx, dy, times = 1) {
+  if (!view.length) return;
+  let [s, i] = [sel.s, sel.i];
+  for (let n = 0; n < times; n++) [s, i] = step(s, i, dx, dy);
+  if (dy < 0 && s === 0 && i < cols) $scroll.scrollTop = 0;   // reveal the first heading
+  select(s, i, true);
+}
+function page(dir) {
+  const rowH = selEl ? selEl.offsetHeight + 2 : 42;
+  move(0, dir, Math.max(1, Math.floor($scroll.clientHeight / rowH) - 1));
+}
+
+// ════════════════════════════════════════════════════════
+//  SEARCH + CATEGORIES
+// ════════════════════════════════════════════════════════
+function runSearch() {
+  const q = $q.value;
+  const searching = q.trim() !== '';
+  if (searching) {
+    const items = search(q);
+    if (items.length) {
+      const sec = makeSection('_results', items.length === 300 ? 'Top results' : items.length === 1 ? '1 result' : items.length + ' results', items);
+      results = [sec];
+      $results.replaceChildren(sec.el);
+    } else {
+      results = [];
+      const none = document.createElement('div');
+      none.className = 'empty';
+      const face = document.createElement('b');
+      face.textContent = '🫥';
+      none.append(face, `No emoji found for “${q.trim()}”`);
+      $results.replaceChildren(none);
+    }
+  }
+  view = searching ? results : browse;
+  $browse.hidden = searching;
+  $results.hidden = !searching;
+  $scroll.scrollTop = 0;
+  select(0, 0, false);
+  syncTab();
+}
+function clearSearch() {
+  if ($q.value === '') return;
+  $q.value = '';
+  runSearch();
+}
+
+function jump(idx) {
+  buildRest();
+  clearSearch();
+  idx = Math.max(0, Math.min(idx, browse.length - 1));
+  $scroll.scrollTop = idx ? browse[idx].el.offsetTop : 0;
+  select(idx, 0, false);
+  syncTab();
+}
+
+let tabRaf = 0;
+function syncTab() {
+  tabRaf = 0;
+  let key = null;
+  if (view === browse) {
+    const top = $scroll.scrollTop + 8;
+    for (const s of browse) { if (s.el.offsetTop <= top) key = s.key; else break; }
+  }
+  for (const b of $cats.children) b.classList.toggle('active', b._key === key);
+}
+
+// ════════════════════════════════════════════════════════
+//  TRAY + PASTE
+// ════════════════════════════════════════════════════════
+function drawTray() {
+  $tray.replaceChildren(...tray.map((em, i) => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.tabIndex = -1; b.textContent = em; b.title = 'Remove';
+    b._i = i;
+    return b;
+  }));
+  drawFooter();
+}
+function add(it) {
+  if (!it) return;
+  tray.push(withTone(it.e));
+  if ($q.value) $q.select();      // the next thing typed starts a new search
+  drawTray();
+}
+function addSelected() {
+  if (!current()) return;
+  add(current());
+  justAdded = true;
+  drawFooter();
+}
+function untray(all) {
+  if (!tray.length) return;
+  if (all) tray = []; else tray.pop();
+  justAdded = false;
+  drawTray();
+}
+
+function clipWrite(text) {
+  const t = document.createElement('textarea');
+  t.value = text;
+  t.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+  document.body.appendChild(t);
+  t.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  t.remove();
+}
+// The launcher passes "#<port>/<token>" and listens there for the picked text. Opened any other
+// way (or if that fails), fall back to leaving "EP:<text>" on the clipboard.
+const HOOK = /^#(\d+)\/(\w+)$/.exec(location.hash);
+function deliver(text) {
+  const legacy = () => { clipWrite('EP:' + text); setTimeout(() => window.close(), 300); };
+  if (!HOOK) return legacy();
+  fetch(`http://127.0.0.1:${HOOK[1]}/${HOOK[2]}`, {method: 'POST', mode: 'no-cors', body: text})
+    .then(() => window.close(), legacy);
+}
+function paste(list) {
+  if (sent || !list.length) return;
+  sent = true;
+  const now = Date.now();
+  for (const em of list) {
+    const base = em.replace(TONE_RE, '');
+    usage[base] = {n: getCount(base) + 1, t: now};
+  }
+  store.set('ep_u', JSON.stringify(usage));
+  document.body.classList.add('sent');
+  deliver(list.join(''));
+}
+function pasteWith(it) {
+  paste(it ? [...tray, withTone(it.e)] : tray);
+}
+
+// ════════════════════════════════════════════════════════
+//  FOOTER
+// ════════════════════════════════════════════════════════
+function hint(key, text) {
+  const s = document.createElement('span'), k = document.createElement('kbd');
+  k.textContent = key;
+  s.append(k, text);
+  return s;
+}
+function drawFooter() {
+  const it = current();
+  $pvEm.textContent = it ? withTone(it.e) : '';
+  $pvNm.textContent = it ? it.d[0].toUpperCase() + it.d.slice(1) : '';
+  const enter = !tray.length ? 'Paste' : justAdded || !it ? 'Paste ' + tray.length : 'Add & paste';
+  $hints.replaceChildren(
+    hint('↵', enter),
+    hint('Tab', 'Add'),
+    hint('Esc', $q.value ? 'Clear' : 'Close'),
+  );
+}
+
+// ════════════════════════════════════════════════════════
+//  SETTINGS
+// ════════════════════════════════════════════════════════
+function setTone(n) {
+  skinTone = n;
+  store.set('ep_skin', n);
+  for (const sec of [...browse, ...results]) sec.btns.forEach((b, i) => { b.textContent = withTone(sec.items[i].e); });
+  $toneBtn.textContent = withTone('👋');
+  const r = document.querySelector(`#tones input[value="${n}"]`);
+  if (r) r.checked = true;
+  drawFooter();
+}
+function setSize(px) {
+  emojiSize = px;
+  store.set('ep_sz', px);
+  document.documentElement.style.setProperty('--esz', px + 'px');
+  $('size').value = px;
+  $('size-out').textContent = px + 'px';
+  layout();
+}
+function layout() {
+  const w = $list.clientWidth;
+  if (!w) return;
+  const c = Math.max(4, Math.floor((w + 2) / (emojiSize + 18)));
+  if (c === cols) return;
+  cols = c;
+  document.documentElement.style.setProperty('--cols', c);
+  refreshFrequent();
+}
+function radios(host, name, options, checked, onPick) {
+  options.forEach(([value, build]) => {
+    const label = document.createElement('label'), input = document.createElement('input'), face = document.createElement('span');
+    input.type = 'radio'; input.name = name; input.value = value; input.checked = value === checked;
+    input.addEventListener('change', () => onPick(value));
+    build(face);
+    label.append(input, face);
+    host.append(label);
+  });
+}
+function togglePanel() {
+  if ($panel.open) return $panel.close();
+  $panel.showModal();
+  document.querySelector('#themes input:checked')?.focus();   // arrow keys switch theme straight away
+}
+
+// ════════════════════════════════════════════════════════
+//  INPUT
+// ════════════════════════════════════════════════════════
+const ARROWS = {ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1]};
+const VIM    = {h: [-1, 0], l: [1, 0], k: [0, -1], j: [0, 1]};
+
+document.addEventListener('keydown', e => {
+  if (sent || e.isComposing) return;
+  const k = e.key, sh = e.shiftKey;
+  const ctrl  = e.ctrlKey && !e.altKey && !e.metaKey;
+  const plain = !e.ctrlKey && !e.altKey && !e.metaKey;
+  const take = fn => { e.preventDefault(); fn(); };
+
+  if ((ctrl && k === ',') || (plain && k === 'F1')) return take(togglePanel);
+  if ($panel.open) return;                                   // the dialog handles its own keys
+  if (document.activeElement !== $q) $q.focus();
+
+  if (plain && !sh && ARROWS[k]) return take(() => move(...ARROWS[k]));
+  if (plain && sh && VIM[k.toLowerCase()]) return take(() => move(...VIM[k.toLowerCase()]));
+  if (plain && k === 'PageDown') return take(() => page(1));
+  if (plain && k === 'PageUp')   return take(() => page(-1));
+
+  if (k === 'Enter') {
+    if (plain && sh) return take(addSelected);
+    if (plain) return take(() => pasteWith(justAdded ? null : current()));
+    return e.preventDefault();
+  }
+  if (k === 'Tab') {
+    if (ctrl) return take(() => { if (view === browse) jump((sel.s + (sh ? -1 : 1) + browse.length) % browse.length); });
+    if (plain) return take(() => sh ? untray(false) : addSelected());
+    return e.preventDefault();
+  }
+  if (k === 'Backspace' && $q.value === '' && tray.length) return take(() => untray(ctrl));
+  if (k === 'Escape') return take(() => $q.value ? clearSearch() : window.close());
+  if (ctrl && !sh && k.toLowerCase() === 's') return take(() => setTone((skinTone + 1) % 6));
+});
+
+$q.addEventListener('input', runSearch);
+
+// Clicks never take focus away from the search field.
+document.addEventListener('mousedown', e => {
+  if (!$panel.open && e.target !== $q) { e.preventDefault(); $q.focus(); }
+});
+window.addEventListener('focus', () => { if (!$panel.open) $q.focus(); });
+
+$list.addEventListener('click', e => {
+  const b = e.target.closest('.e');
+  if (!b || sent) return;
+  const it = b._sec.items[b._i];
+  if (e.shiftKey || e.ctrlKey) add(it); else pasteWith(it);
+});
+$list.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const b = e.target.closest('.e');
+  if (b && !sent) add(b._sec.items[b._i]);
+});
+// Hovering moves the selection, but only on real pointer movement — not when the list scrolls under it.
+let lastX = -1, lastY = -1;
+$list.addEventListener('mousemove', e => {
+  if (e.screenX === lastX && e.screenY === lastY) return;
+  lastX = e.screenX; lastY = e.screenY;
+  const b = e.target.closest('.e');
+  if (!b || b === selEl) return;
+  const s = view.indexOf(b._sec);
+  if (s !== -1) select(s, b._i, false);
+});
+$tray.addEventListener('click', e => {
+  const b = e.target.closest('.chip');
+  if (!b) return;
+  tray.splice(b._i, 1);
+  justAdded = false;
+  drawTray();
+});
+$scroll.addEventListener('scroll', () => { if (!tabRaf) tabRaf = requestAnimationFrame(syncTab); }, {passive: true});
+$toneBtn.addEventListener('click', () => setTone((skinTone + 1) % 6));
+$('set-btn').addEventListener('click', togglePanel);
+$('panel-x').addEventListener('click', () => $panel.close());
+$panel.addEventListener('close', () => $q.focus());
+$('size').addEventListener('input', e => setSize(clamp(parseInt(e.target.value), 18, 40, 24)));
+$('clear-hist').addEventListener('click', e => {
+  usage = {};
+  store.del('ep_u');
+  refreshFrequent();
+  e.target.textContent = 'Cleared';
+});
+
+// ════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════
+CATS.forEach((c, i) => {
+  const b = document.createElement('button');
+  b.className = 'cat'; b.tabIndex = -1; b.textContent = c.icon; b.title = c.label; b._key = c.key;
+  b.addEventListener('click', () => jump(i));
+  $cats.append(b);
+  browse.push(makeSection(c.key, c.label, c.key === '_top' ? [] : ALL.filter(it => it.cat === c.key), i > 1));
+});
+$browse.append(...browse.map(s => s.el));
+
+radios($('themes'), 'theme', Object.keys(THEMES).map(name => [name, face => {
+  const dot = document.createElement('i');
+  dot.style.background = `linear-gradient(135deg, ${THEMES[name].bg} 50%, ${THEMES[name].acc} 50%)`;
+  face.append(dot, name[0].toUpperCase() + name.slice(1));
+}]), currentTheme, name => { applyTheme(name); store.set('ep_theme', name); });
+radios($('tones'), 'tone', TONE_CHARS.map((t, i) => [String(i), face => { face.textContent = '👋' + t; }]),
+  String(skinTone), v => setTone(+v));
+
+$toneBtn.textContent = withTone('👋');
+setSize(emojiSize);                       // also runs the first layout() and fills "Frequently used"
+new ResizeObserver(layout).observe($list);
+select(0, 0, false);
+syncTab();
+$q.focus();
+requestAnimationFrame(() => setTimeout(buildRest));
+</script>
+</body>
+</html>

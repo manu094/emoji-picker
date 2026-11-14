@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# emoji-picker — launches the picker and pastes the selected emoji
+set -u
+
+PICKER=""
+for _p in \
+  "$HOME/.local/share/emoji-picker/emoji-picker.html" \
+  "/usr/share/emoji-picker/emoji-picker.html"; do
+  [ -f "$_p" ] && PICKER="$_p" && break
+done
+
+PROFILE="$HOME/.local/share/emoji-picker/profile"
+
+notify() { notify-send "Emoji Picker" "$1" 2>/dev/null || true; echo "[ep] $1" >&2; }
+
+# ── Diagnostic mode ───────────────────────────────────────────────────────
+if [ "${1:-}" = "--check" ]; then
+  echo "=== Emoji Picker diagnostic ==="
+  echo "HTML       : $([ -n "$PICKER" ] && echo "OK ($PICKER)" || echo MISSING)"
+  echo "Session    : ${XDG_SESSION_TYPE:-?}"
+  for b in chromium chromium-browser google-chrome-stable brave brave-browser vivaldi; do
+    command -v "$b" >/dev/null 2>&1 && echo "Browser    : $b" && break
+  done
+  for t in qdbus ydotool; do
+    command -v "$t" >/dev/null 2>&1 && echo "Tool       : $t"
+  done
+  if command -v qdbus >/dev/null 2>&1; then
+    qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents >/dev/null 2>&1 \
+      && echo "Klipper    : accessible" || echo "Klipper    : NOT accessible"
+  fi
+  if command -v ydotool >/dev/null 2>&1; then
+    systemctl --user is-active ydotool >/dev/null 2>&1 \
+      && echo "ydotoold   : active" || echo "ydotoold   : INACTIVE"
+  fi
+  groups | grep -qw input && echo "Group      : input OK" || echo "Group      : input MISSING"
+  [ -r /dev/uinput ] && [ -w /dev/uinput ] && echo "/dev/uinput: accessible" || echo "/dev/uinput: NOT accessible"
+  exit 0
+fi
+
+# ── Pre-checks ────────────────────────────────────────────────────────────
+[ -n "$PICKER" ] || { notify "emoji-picker.html not found"; exit 1; }
+
+BROWSER=""
+for b in chromium chromium-browser google-chrome-stable google-chrome brave brave-browser vivaldi; do
+  command -v "$b" >/dev/null 2>&1 && BROWSER="$b" && break
+done
+[ -n "$BROWSER" ] || { notify "No Chromium-based browser found"; exit 1; }
+
+mkdir -p "$PROFILE"
+
+# ── Launch picker (blocks until window closes) ────────────────────────────
+"$BROWSER" \
+  --app="file://$PICKER" \
+  --user-data-dir="$PROFILE" \
+  --window-size=440,580 \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-features=TranslateUI \
+  >/dev/null 2>&1
+
+# ── Poll for EP: prefix in clipboard (up to 1s) ──────────────────────────
+# doSend() writes "EP:<emoji>" — a prefix that cannot appear in normal clipboard.
+# Abort (Esc/:q/:wq) leaves clipboard untouched, so we never paste spuriously.
+NEW=""
+for _i in 1 2 3 4 5 6 7 8 9 10; do
+  sleep 0.1
+  NEW=$(qdbus org.kde.klipper /klipper org.kde.klipper.klipper.getClipboardContents 2>/dev/null || true)
+  [[ "$NEW" == EP:* ]] && break
+  NEW=""
+done
+
+[ -z "$NEW" ] && exit 0
+
+# Strip prefix — put just the emoji into clipboard for pasting
+EMOJI="${NEW#EP:}"
+qdbus org.kde.klipper /klipper org.kde.klipper.klipper.setClipboardContents "$EMOJI" 2>/dev/null || true
+
+# ── Paste into the previously focused window ──────────────────────────────
+sleep 0.3   # let WM restore focus to target window
+
+# KEY_LEFTCTRL=29  KEY_V=47
+ydotool key 29:1 47:1 47:0 29:0 \
+  || notify "ydotool failed — run: systemctl --user start ydotool"
